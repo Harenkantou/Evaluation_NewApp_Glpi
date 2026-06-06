@@ -1,0 +1,30 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: backend
+  datasource:
+    url: jdbc:sqlite:../data/newapp.sqlite
+    driver-class-name: org.sqlite.JDBC
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.community.dialect.SQLiteDialect
+        format_sql: true
+    open-in-view: false
+
+# Configuration propre à NewApp
+newapp:
+  # Code unique d'accès au BackOffice (étape 1.a) - pré-rempli dans le formulaire
+  backoffice-code: admin
+  storage:
+    # Dossier d'extraction des images du ZIP (étape import)
+    images-dir: ../data/storage/images
+
+logging:
+  level:
+    org.hibernate.SQL: debug
