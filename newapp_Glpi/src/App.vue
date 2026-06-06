@@ -69,7 +69,7 @@ onMounted(loadTickets)
         <li v-for="ticket in tickets" :key="ticket.id">
           <strong>{{ ticket.name || 'Sans titre' }}</strong>
           <span v-if="ticket.status" class="status">
-            Statut : {{ ticket.status }}
+            Statut : {{ ticket.status.name || ticket.status }}
           </span>
         </li>
       </ul>
