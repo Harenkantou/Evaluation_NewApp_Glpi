@@ -2,7 +2,6 @@ Config  initail:
 {"session_token":"MjNmK0pGUUl2ZDB4MGxnM2d3Mk9wRUlnMWhmeWNVQkNsK0YwdHhGWnluNlRLV0ZMbk9kaXNQaEcxMmJld2RFRjFGbXdZQ291c3k2VXpwK1U5eS9qZDNYcg=="}
 User Toek: mjdoI3isuEVK3qWVGEUTqV07RvHMk3hScbTMcSFH
 
-//Base de données:
+Utilisateur et mdp pour accès à la Base de données:
 Utilisateur : glpi_admin
-
 Mot de passe : admin
