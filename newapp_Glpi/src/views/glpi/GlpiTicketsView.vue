@@ -31,11 +31,6 @@ onMounted(load)
 
 <template>
   <div class="glpi">
-    <header class="bar">
-      <h1>ExistingApp — Tickets GLPI</h1>
-      <router-link class="link" :to="{ name: 'dashboard' }">→ BackOffice NewApp</router-link>
-    </header>
-
     <div v-if="loading" class="info">Chargement des tickets GLPI...</div>
 
     <div v-else-if="error" class="error">

@@ -21,9 +21,6 @@ const routes = [
   { path: '/admin/import', name: 'import', component: ImportView, meta: { requiresAuth: true } },
   { path: '/admin/reset', name: 'reset', component: ResetView, meta: { requiresAuth: true } },
   { path: '/admin/tickets', name: 'tickets', component: TicketsView, meta: { requiresAuth: true } },
-
-  // ExistingApp : tickets GLPI (vue dédiée). Route publique.
-  { path: '/glpi/tickets', name: 'glpi-tickets', component: GlpiTicketsView }
 ]
 
 const router = createRouter({

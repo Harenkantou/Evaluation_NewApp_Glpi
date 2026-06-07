@@ -1,141 +1,79 @@
-<script setup>
-import { onMounted, ref } from 'vue'
-import { initSession, getTickets } from './services/glpiApi'
-
-const tickets = ref([])
-const loading = ref(true)
-const error = ref(null)
-
-async function loadTickets() {
-  loading.value = true
-  error.value = null
-
-  try {
-    // 1. Obtenir un access_token OAuth2 (API v2)
-    const accessToken = await initSession()
-    console.log('Token OAuth2 obtenu avec succès')
-
-    // 2. Récupérer les tickets avec le Bearer token
-    const response = await getTickets(accessToken)
-
-    // L'API v2 renvoie un tableau d'items.
-    // On reste tolérant sur le format de la réponse.
-    if (Array.isArray(response)) {
-      tickets.value = response
-    } else if (Array.isArray(response?.data)) {
-      tickets.value = response.data
-    } else {
-      tickets.value = []
-    }
-
-    console.log(`${tickets.value.length} tickets récupérés`)
-  } catch (err) {
-    console.error('Erreur détaillée:', err)
-    error.value =
-      err.response?.data?.detail ||
-      err.response?.data?.title ||
-      err.response?.data?.message ||
-      err.message ||
-      "Erreur de connexion à l'API GLPI"
-  } finally {
-    loading.value = false
-  }
-}
-
-onMounted(loadTickets)
-</script>
-
 <template>
-  <main>
-    <h1>NewApp GLPI</h1>
+  <div id="app">
+    <header class="app-header">
+      <div class="brand">
+        <h1>NewApp GLPI</h1>
+      </div>
+      <nav class="top-nav">
+        <router-link to="/login">Connexion</router-link>
+        <router-link to="/admin/dashboard">Tableau de bord</router-link>
+        <router-link to="/admin/import">Importer</router-link>
+        <router-link to="/admin/reset">Réinitialiser</router-link>
+      </nav>
+    </header>
 
-    <!-- État de chargement -->
-    <div v-if="loading" class="loading">
-      Chargement des tickets...
-    </div>
-
-    <!-- Erreur -->
-    <div v-else-if="error" class="error">
-      <h2>Erreur</h2>
-      <p>{{ error }}</p>
-      <button @click="loadTickets">Réessayer</button>
-    </div>
-
-    <!-- Tickets -->
-    <div v-else>
-      <p>Nombre de tickets : {{ tickets.length }}</p>
-
-      <ul v-if="tickets.length > 0">
-        <li v-for="ticket in tickets" :key="ticket.id">
-          <strong>{{ ticket.name || 'Sans titre' }}</strong>
-          <span v-if="ticket.status" class="status">
-            Statut : {{ ticket.status.name || ticket.status }}
-          </span>
-        </li>
-      </ul>
-
-      <p v-else class="empty">
-        Aucun ticket trouvé
-      </p>
-    </div>
-  </main>
+    <main class="app-main">
+      <router-view />
+    </main>
+  </div>
 </template>
 
-<style scoped>
-main {
-  padding: 2rem;
-  font-family: Arial, sans-serif;
+<style>
+:root {
+  color-scheme: dark light;
 }
-
-.loading {
-  text-align: center;
-  color: #666;
-  padding: 2rem;
+html, body {
+  margin: 0;
+  min-height: 100%;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #f8fafc;
+  color: #0f172a;
 }
-
-.error {
-  color: #d32f2f;
-  background: #ffebee;
-  padding: 1rem;
-  border-radius: 8px;
+#app {
+  min-height: 100vh;
 }
-
-.error button {
-  margin-top: 1rem;
-  padding: 0.5rem 1rem;
-  background: #d32f2f;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-ul {
-  list-style: none;
-  padding: 0;
-}
-
-li {
-  background: #f5f5f5;
-  margin: 0.5rem 0;
-  padding: 1rem;
-  border-radius: 8px;
+.app-header {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  background: #1e293b;
+  color: #f8fafc;
 }
-
-.status {
-  font-size: 0.8rem;
-  color: #666;
-  background: #e0e0e0;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
+.brand h1 {
+  margin: 0;
+  font-size: 1.5rem;
 }
-
-.empty {
-  text-align: center;
-  color: #999;
-  padding: 2rem;
+.brand p {
+  margin: 0.4rem 0 0;
+  color: #cbd5e1;
+  font-size: 0.95rem;
+}
+.top-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.top-nav a {
+  color: #cbd5e1;
+  text-decoration: none;
+  padding: 0.55rem 0.95rem;
+  border-radius: 9999px;
+  background: rgba(255,255,255,0.08);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.top-nav a.router-link-active {
+  background: #2563eb;
+  color: #fff;
+}
+.top-nav a:hover {
+  background: rgba(255,255,255,0.16);
+}
+.app-main {
+  padding: 2rem 1.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 </style>

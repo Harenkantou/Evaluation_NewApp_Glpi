@@ -131,8 +131,6 @@ export const useGlpiStore = defineStore('glpi', () => {
   }
 
   return { token, importedIds, ensureToken, importToGlpi, fetchStats, resetImported }
-}, {
-  persist: { pick: ['importedIds'] }
 })
 
 // ---------- Helpers ----------

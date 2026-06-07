@@ -39,7 +39,11 @@ async function submit() {
 <template>
   <BoLayout>
     <h1>Importer les données vers GLPI</h1>
-    <p class="hint">Les fichiers CSV sont lus puis envoyés à GLPI via l'API REST (JSON).</p>
+    <p class="hint">
+      Les fichiers CSV sont lus côté navigateur puis envoyés à GLPI via l'API REST (JSON).
+      Sélectionnez les 3 fichiers fournis :
+      feuille 1 = éléments, feuille 2 = tickets, feuille 3 = coûts.
+    </p>
 
     <div class="card">
       <label class="field">

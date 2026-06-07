@@ -10,7 +10,6 @@ const links = [
   { name: 'import', label: 'Importer', icon: '📥' },
   { name: 'reset', label: 'Réinitialiser', icon: '🔄' },
   { name: 'tickets', label: 'Tickets', icon: '🎫' },
-  { name: 'glpi-tickets', label: 'Tickets GLPI', icon: '🔗' }
 ]
 
 async function handleLogout() {

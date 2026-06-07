@@ -40,6 +40,7 @@ function submit() {
         autocomplete="off"
         placeholder="Entrez le code"
       />
+      <p class="hint">Code par défaut : <strong>admin</strong></p>
 
       <p v-if="error" class="error">{{ error }}</p>
 
