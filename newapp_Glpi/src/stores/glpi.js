@@ -2,113 +2,146 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import {
   initSession,
-  getComputers, getMonitors, getTickets,
+  getComputers, getMonitors, getTickets, getDocuments,
   createComputer, createMonitor, createTicket, linkItemToTicket,
-  deleteComputer, deleteMonitor, deleteTicket
+  uploadDocument, findOrCreateDropdown,
+  deleteComputer, deleteMonitor, deleteTicket, deleteDocument
 } from '@/services/glpiApi'
 
 /**
- * Store GLPI : gère le token OAuth2 et expose les opérations métier
- * (import CSV -> GLPI, lecture pour dashboard/listes, reset).
+ * Store GLPI : token OAuth2 + opérations métier
+ * (import CSV + images -> GLPI, lecture dashboard/listes, purge/reset).
  *
- * On mémorise les IDs créés par l'import (importedIds) pour pouvoir
- * faire un reset ciblé (supprimer uniquement ce que NewApp a importé).
- * Ces IDs sont persistés (localStorage) pour survivre au refresh.
+ * Images : envoyées à GLPI comme Documents (namespace Management) et liées
+ * à l'élément (Computer/Monitor) du même Name. Tout passe par l'API.
  */
 export const useGlpiStore = defineStore('glpi', () => {
   const token = ref('')
-  const importedIds = ref({ computers: [], monitors: [], tickets: [] })
+  const importedIds = ref({ computers: [], monitors: [], tickets: [], documents: [] })
 
-  /** S'assure d'avoir un token valide (en obtient un si besoin). */
   async function ensureToken() {
-    if (!token.value) {
-      token.value = await initSession()
-    }
+    if (!token.value) token.value = await initSession()
     return token.value
   }
 
-  // ---------- IMPORT CSV -> GLPI ----------
+  // ---------- IMPORT CSV (+ images) -> GLPI ----------
   /**
-   * @param {{elements, tickets, costs}} parsed  données issues des CSV
-   * @returns récapitulatif { computers, monitors, tickets, links, warnings }
+   * @param {{elements, tickets, costs}} parsed   données issues des CSV
+   * @param {Object<string, File>} images         map { baseNameSansExt: File } du ZIP
+   * @returns récap { computers, monitors, tickets, links, images, warnings }
    */
-  async function importToGlpi(parsed) {
+  async function importToGlpi(parsed, images = {}) {
     const t = await ensureToken()
     const warnings = []
-    const counts = { computers: 0, monitors: 0, tickets: 0, links: 0 }
-    const ids = { computers: [], monitors: [], tickets: [] }
-
-    // Map name CSV -> { itemtype, id } pour la liaison aux tickets
+    const counts = { computers: 0, monitors: 0, tickets: 0, links: 0, images: 0 }
+    const ids = { computers: [], monitors: [], tickets: [], documents: [] }
     const elementRef = {}
 
-    // 1) Éléments -> Computer / Monitor
-    for (const e of (parsed.elements || [])) {
-      const name = e.Name
-      if (!name) continue
-      const payload = {
-        name,
-        serial: e.Inventory_Number || '',
-        comment: `Importé NewApp — ${e.Manufacturer || ''} ${e.Model || ''} | `
-               + `Lieu: ${e.Location || ''} | Statut: ${e.Status || ''} | `
-               + `Utilisateur: ${e.User || '-'}`
-      }
-      try {
-        if (e.Item_Type === 'Monitor') {
-          const res = await createMonitor(t, payload)
-          const id = extractId(res)
-          ids.monitors.push(id)
-          elementRef[name] = { itemtype: 'Monitor', id }
-          counts.monitors++
-        } else {
-          // Computer par défaut
-          const res = await createComputer(t, payload)
-          const id = extractId(res)
-          ids.computers.push(id)
-          elementRef[name] = { itemtype: 'Computer', id }
-          counts.computers++
+    try {
+      // 1) Éléments -> Computer / Monitor (+ image éventuelle)
+      for (const e of (parsed.elements || [])) {
+        const name = e.Name
+        if (!name) continue
+
+        // Résoudre les dropdowns (créés dans GLPI si absents) — via API v1
+        const locationsId = await findOrCreateDropdown('Location', e.Location)
+        const manufacturersId = await findOrCreateDropdown('Manufacturer', e.Manufacturer)
+        const statesId = await findOrCreateDropdown('State', e.Status)
+
+        const payload = {
+          name,
+          serial: e.Inventory_Number || '',
+          comment: `Importé NewApp — Modèle: ${e.Model || '-'} | Utilisateur: ${e.User || '-'}`
         }
-      } catch (err) {
-        warnings.push(`Élément '${name}' non créé : ${errMsg(err)}`)
-      }
-    }
+        if (locationsId) payload.locations_id = locationsId
+        if (manufacturersId) payload.manufacturers_id = manufacturersId
+        if (statesId) payload.states_id = statesId
 
-    // 2) Tickets (+ coûts intégrés au contenu) -> Ticket
-    const costByRef = groupCosts(parsed.costs)
-    for (const tk of (parsed.tickets || [])) {
-      const ref = tk.Ref_Ticket
-      const costText = formatCosts(costByRef[String(ref)])
-      const payload = {
-        name: tk.Titre || `Ticket ${ref}`,
-        content: (tk.Description || '') + costText,
-        // status/priority/urgency : GLPI attend des entiers ; on laisse les défauts
-      }
-      try {
-        const res = await createTicket(t, payload)
-        const ticketId = extractId(res)
-        ids.tickets.push(ticketId)
-        counts.tickets++
-
-        // 3) Liaison éléments du ticket (colonne Items)
-        for (const elName of parseItems(tk.Items)) {
-          const elt = elementRef[elName]
-          if (!elt) {
-            warnings.push(`Ticket ${ref} : élément '${elName}' introuvable.`)
-            continue
+        let id, itemtype
+        try {
+          if (e.Item_Type === 'Monitor') {
+            const res = await createMonitor(t, payload)
+            id = extractId(res)
+            if (!id || (Array.isArray(res) && res[0]?.includes?.('ERROR'))) throw new Error(JSON.stringify(res))
+            itemtype = 'Monitor'
+            ids.monitors.push(id)
+            counts.monitors++
+          } else {
+            const res = await createComputer(t, payload)
+            id = extractId(res)
+            if (!id || (Array.isArray(res) && res[0]?.includes?.('ERROR'))) throw new Error(JSON.stringify(res))
+            itemtype = 'Computer'
+            ids.computers.push(id)
+            counts.computers++
           }
+          elementRef[name] = { itemtype, id }
+        } catch (err) {
+          throw new Error(`Erreur création élément '${name}' : ${errMsg(err)}`)
+        }
+
+        // 1b) Image associée (fichier du ZIP dont le nom = Name de l'élément)
+        const file = images[name]
+        if (file) {
           try {
-            await linkItemToTicket(t, ticketId, elt.itemtype, elt.id)
-            counts.links++
+            const docId = await uploadDocument(t, file, name, itemtype, id)
+            if (docId) {
+              ids.documents.push(docId)
+              counts.images++
+            }
           } catch (err) {
-            warnings.push(`Ticket ${ref} : lien '${elName}' échoué : ${errMsg(err)}`)
+            // Image non bloquante : on signale sans annuler tout l'import
+            warnings.push(`Image de '${name}' non importée : ${errMsg(err)}`)
           }
         }
-      } catch (err) {
-        warnings.push(`Ticket ${ref} non créé : ${errMsg(err)}`)
       }
-    }
 
-    importedIds.value = ids
-    return { ...counts, warnings }
+      // 2) Tickets (+ coûts dans le contenu) -> Ticket
+      const costByRef = groupCosts(parsed.costs)
+      for (const tk of (parsed.tickets || [])) {
+        const ref = tk.Ref_Ticket
+        const costText = formatCosts(costByRef[String(ref)])
+        const payload = {
+          name: tk.Titre || `Ticket ${ref}`,
+          content: (tk.Description || '') + costText
+        }
+        try {
+          const res = await createTicket(t, payload)
+          const ticketId = extractId(res)
+          if (!ticketId || (Array.isArray(res) && res[0]?.includes?.('ERROR'))) throw new Error(JSON.stringify(res))
+          ids.tickets.push(ticketId)
+          counts.tickets++
+
+          // 3) Liaison éléments du ticket (colonne Items)
+          for (const elName of parseItems(tk.Items)) {
+            const elt = elementRef[elName]
+            if (!elt) {
+              warnings.push(`Ticket ${ref} : élément '${elName}' introuvable.`)
+              continue
+            }
+            try {
+              await linkItemToTicket(t, ticketId, elt.itemtype, elt.id)
+              counts.links++
+            } catch (err) {
+              throw new Error(`Erreur liaison ticket ${ref} avec '${elName}' : ${errMsg(err)}`)
+            }
+          }
+        } catch (err) {
+          throw new Error(`Erreur création ticket ${ref} : ${errMsg(err)}`)
+        }
+      }
+
+      importedIds.value = ids
+      return { ...counts, warnings }
+
+    } catch (err) {
+      // ROLLBACK : supprimer définitivement tout ce qui a été créé
+      console.error('Import error, rolling back:', err)
+      for (const id of ids.documents) { await safeDel(() => deleteDocument(t, id)) }
+      for (const id of ids.tickets) { await safeDel(() => deleteTicket(t, id)) }
+      for (const id of ids.computers) { await safeDel(() => deleteComputer(t, id)) }
+      for (const id of ids.monitors) { await safeDel(() => deleteMonitor(t, id)) }
+      throw err
+    }
   }
 
   // ---------- LECTURE (dashboard / listes) ----------
@@ -120,27 +153,73 @@ export const useGlpiStore = defineStore('glpi', () => {
     return { computers, monitors, tickets }
   }
 
-  // ---------- RESET (supprime ce qui a été importé) ----------
-  async function resetImported() {
+  // ---------- PURGE TOTALE (reset) ----------
+  // Récupère les éléments ACTIFS *et* en CORBEILLE, puis purge définitivement.
+  // Boucle jusqu'à 3 passes : certaines suppressions échouent au 1er tour
+  // (dépendances entre objets) puis réussissent quand les liens sont partis.
+  // Renvoie un récap { tickets, computers, monitors, documents, errors }.
+  async function purgeAllData() {
     const t = await ensureToken()
-    const ids = importedIds.value
-    for (const id of ids.tickets) { await safeDel(() => deleteTicket(t, id)) }
-    for (const id of ids.computers) { await safeDel(() => deleteComputer(t, id)) }
-    for (const id of ids.monitors) { await safeDel(() => deleteMonitor(t, id)) }
-    importedIds.value = { computers: [], monitors: [], tickets: [] }
+    const errors = []
+
+    async function purgeType(getFn, delFn, label) {
+      for (let pass = 0; pass < 3; pass++) {
+        const [act, del] = await Promise.all([getFn(t, false), getFn(t, true)])
+        const ids = uniqIds([...act, ...del])
+        if (ids.length === 0) return 0
+        for (const id of ids) {
+          try {
+            await delFn(t, id)
+          } catch (e) {
+            // on garde la dernière erreur pour diagnostic
+            errors.push(`${label} #${id} : ${errMsg(e)}`)
+          }
+        }
+      }
+      // Vérif finale : reste-t-il quelque chose ?
+      const [act2, del2] = await Promise.all([getFn(t, false), getFn(t, true)])
+      return uniqIds([...act2, ...del2]).length
+    }
+
+    // Ordre : tickets d'abord (libère les liens), puis assets, puis documents
+    const remainTickets = await purgeType(getTickets, deleteTicket, 'Ticket')
+    const remainComputers = await purgeType(getComputers, deleteComputer, 'Computer')
+    const remainMonitors = await purgeType(getMonitors, deleteMonitor, 'Monitor')
+    const remainDocuments = await purgeType(getDocuments, deleteDocument, 'Document')
+
+    importedIds.value = { computers: [], monitors: [], tickets: [], documents: [] }
+
+    return {
+      remaining: {
+        tickets: remainTickets,
+        computers: remainComputers,
+        monitors: remainMonitors,
+        documents: remainDocuments
+      },
+      errors
+    }
   }
 
-  return { token, importedIds, ensureToken, importToGlpi, fetchStats, resetImported }
+  return { token, importedIds, ensureToken, importToGlpi, fetchStats, purgeAllData }
 })
 
 // ---------- Helpers ----------
+function uniqIds(list) {
+  const set = new Set()
+  for (const item of list) {
+    const id = item?.id ?? item
+    if (id != null) set.add(id)
+  }
+  return [...set]
+}
+
 function extractId(res) {
-  // GLPI peut renvoyer {id} ou {href:"/Assets/Computer/15"} selon la version
   if (res?.id) return res.id
   if (res?.href) {
     const m = String(res.href).match(/(\d+)\s*$/)
     if (m) return Number(m[1])
   }
+  if (Array.isArray(res) && res[0]?.id) return res[0].id
   return res
 }
 
@@ -182,5 +261,5 @@ function errMsg(err) {
 }
 
 async function safeDel(fn) {
-  try { await fn() } catch (e) { /* on ignore les échecs de suppression */ }
+  try { await fn() } catch (e) { console.error('Delete failed:', e) }
 }

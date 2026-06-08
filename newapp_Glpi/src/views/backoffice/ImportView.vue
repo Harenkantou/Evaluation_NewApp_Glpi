@@ -1,35 +1,84 @@
 <script setup>
 import { ref } from 'vue'
+import JSZip from 'jszip'
 import BoLayout from '@/components/backoffice/BoLayout.vue'
 import { parseCsvFiles } from '@/services/csv'
 import { useGlpiStore } from '@/stores/glpi'
 
 const glpi = useGlpiStore()
 
-const csvFiles = ref([])
+// Variables pour les 4 fichiers obligatoires
+const fileElements = ref(null)
+const fileTickets = ref(null)
+const fileCosts = ref(null)
+const fileImages = ref(null)
+
 const loading = ref(false)
+const progress = ref(0)
 const result = ref(null)
 const error = ref('')
 
-function onCsvChange(e) {
-  csvFiles.value = Array.from(e.target.files)
+const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']
+
+/**
+ * Extrait les images du ZIP en objets File, indexés par nom SANS extension
+ * (ex. "PC-ADM-001.jpg" -> clé "PC-ADM-001"), pour les lier aux éléments
+ * portant le même Name.
+ */
+async function extractImagesFromZip(zipFile) {
+  const zip = await JSZip.loadAsync(zipFile)
+  const images = {}
+  const entries = Object.values(zip.files).filter((f) => !f.dir)
+  for (const entry of entries) {
+    const fileName = entry.name.split('/').pop()
+    if (!fileName) continue
+    const ext = fileName.split('.').pop().toLowerCase()
+    if (!IMAGE_EXT.includes(ext)) continue
+    const blob = await entry.async('blob')
+    const baseName = fileName.replace(/\.[^.]+$/, '')
+    images[baseName] = new File([blob], fileName, { type: blob.type || 'application/octet-stream' })
+  }
+  return images
 }
 
 async function submit() {
   error.value = ''
   result.value = null
-  if (csvFiles.value.length === 0) {
-    error.value = 'Veuillez sélectionner les fichiers CSV.'
+
+  // Vérification que les 4 fichiers sont présents
+  if (!fileElements.value || !fileTickets.value || !fileCosts.value || !fileImages.value) {
+    error.value = 'Veuillez sélectionner les 4 fichiers demandés.'
     return
   }
+
   loading.value = true
   try {
-    // 1) Lire les CSV (côté navigateur)
-    const parsed = await parseCsvFiles(csvFiles.value)
-    // 2) Envoyer vers GLPI via l'API REST (JSON)
-    result.value = await glpi.importToGlpi(parsed)
+    progress.value = 10
+
+    // Purge totale avant import (repart d'une base propre)
+    await glpi.purgeAllData()
+    progress.value = 25
+
+    // 1) Lire et parser les fichiers CSV
+    const csvFilesToParse = [fileElements.value, fileTickets.value, fileCosts.value]
+    const parsed = await parseCsvFiles(csvFilesToParse)
+    progress.value = 35
+
+    // 2) Extraire les images du ZIP (objets File)
+    const images = await extractImagesFromZip(fileImages.value)
+    progress.value = 50
+
+    // 3) Envoyer CSV + images vers GLPI (API)
+    const importResult = await glpi.importToGlpi(parsed, images)
+    progress.value = 90
+
+    result.value = importResult
+    progress.value = 100
+
   } catch (e) {
-    error.value = "Erreur lors de l'import : " + (e.response?.data?.detail || e.message || e)
+    progress.value = 0
+    error.value = "Erreur fatale : " + (e.message || "inconnue")
+      + ". Loi du tout ou rien appliquée : aucune nouvelle donnée n'a été insérée."
   } finally {
     loading.value = false
   }
@@ -39,23 +88,32 @@ async function submit() {
 <template>
   <BoLayout>
     <h1>Importer les données vers GLPI</h1>
-    <p class="hint">
-      Les fichiers CSV sont lus côté navigateur puis envoyés à GLPI via l'API REST (JSON).
-      Sélectionnez les 3 fichiers fournis :
-      feuille 1 = éléments, feuille 2 = tickets, feuille 3 = coûts.
-    </p>
-
     <div class="card">
       <label class="field">
-        <span>Fichiers CSV (éléments, tickets, coûts)</span>
-        <input type="file" accept=".csv" multiple @change="onCsvChange" />
+        <span>Fichier Éléments (CSV)</span>
+        <input type="file" accept=".csv" @change="e => fileElements = e.target.files[0]" />
       </label>
-      <ul v-if="csvFiles.length" class="files">
-        <li v-for="f in csvFiles" :key="f.name">📄 {{ f.name }}</li>
-      </ul>
+      <label class="field">
+        <span>Fichier Tickets (CSV)</span>
+        <input type="file" accept=".csv" @change="e => fileTickets = e.target.files[0]" />
+      </label>
+      <label class="field">
+        <span>Fichier Coûts (CSV)</span>
+        <input type="file" accept=".csv" @change="e => fileCosts = e.target.files[0]" />
+      </label>
+      <label class="field">
+        <span>Fichier Images (ZIP)</span>
+        <input type="file" accept=".zip" @change="e => fileImages = e.target.files[0]" />
+      </label>
 
-      <button :disabled="loading" @click="submit">
-        {{ loading ? 'Import vers GLPI...' : 'Importer vers GLPI' }}
+      <!-- Barre de progression -->
+      <div v-if="loading" class="progress-box">
+        <label>Progression de l'import : {{ progress }}%</label>
+        <progress :value="progress" max="100"></progress>
+      </div>
+
+      <button :disabled="loading" @click="submit" class="submit-btn">
+        {{ loading ? 'Traitement en cours...' : 'Importer vers GLPI' }}
       </button>
       <p v-if="error" class="error">{{ error }}</p>
     </div>
@@ -67,6 +125,7 @@ async function submit() {
         <li><strong>{{ result.monitors }}</strong> écrans</li>
         <li><strong>{{ result.tickets }}</strong> tickets</li>
         <li><strong>{{ result.links }}</strong> liaisons</li>
+        <li><strong>{{ result.images }}</strong> images</li>
       </ul>
       <div v-if="result.warnings && result.warnings.length" class="warnings">
         <h3>Avertissements</h3>
@@ -100,4 +159,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 .stats { list-style: none; display: flex; gap: 1.5rem; padding: 0; flex-wrap: wrap; }
 .stats strong { font-size: 1.5rem; color: #2563eb; display: block; }
 .warnings { margin-top: 1rem; color: #92400e; }
+.progress-box { margin-bottom: 1rem; }
+.progress-box label { display: block; margin-bottom: 0.5rem; color: #334155; }
+progress { width: 100%; height: 10px; }
 </style>

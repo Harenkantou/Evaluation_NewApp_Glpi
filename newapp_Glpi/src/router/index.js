@@ -7,8 +7,8 @@ import DashboardView from '@/views/backoffice/DashboardView.vue'
 import ImportView from '@/views/backoffice/ImportView.vue'
 import ResetView from '@/views/backoffice/ResetView.vue'
 import TicketsView from '@/views/backoffice/TicketsView.vue'
-import GlpiTicketsView from '@/views/glpi/GlpiTicketsView.vue'
-
+//import GlpiTicketsView from '@/views/glpi/GlpiTicketsView.vue'
+import TicketDetailView from '@/views/backoffice/TicketDetailView.vue'
 const routes = [
   { path: '/', redirect: '/admin/dashboard' },
 
@@ -21,6 +21,7 @@ const routes = [
   { path: '/admin/import', name: 'import', component: ImportView, meta: { requiresAuth: true } },
   { path: '/admin/reset', name: 'reset', component: ResetView, meta: { requiresAuth: true } },
   { path: '/admin/tickets', name: 'tickets', component: TicketsView, meta: { requiresAuth: true } },
+  { path: '/admin/tickets/:id', name: 'ticket-detail', component: TicketDetailView, meta: { requiresAuth: true } },
 ]
 
 const router = createRouter({

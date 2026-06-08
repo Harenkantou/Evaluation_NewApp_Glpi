@@ -34,13 +34,16 @@ onMounted(load)
 
     <table v-else-if="tickets.length" class="grid">
       <thead>
-        <tr><th>ID</th><th>Titre</th><th>Statut</th></tr>
+        <tr><th>ID</th><th>Titre</th><th>Statut</th><th>Action</th></tr>
       </thead>
       <tbody>
         <tr v-for="t in tickets" :key="t.id">
           <td>{{ t.id }}</td>
           <td>{{ t.name || 'Sans titre' }}</td>
           <td>{{ t.status?.name || t.status }}</td>
+          <td>
+            <button class="view-btn" @click="$router.push({name: 'ticket-detail', params: {id: t.id}})">Voir detail ticket</button>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -58,4 +61,11 @@ h1 { margin-top: 0; }
 }
 th, td { padding: 0.8rem 1rem; text-align: left; border-bottom: 1px solid #f1f5f9; }
 th { background: #f8fafc; font-size: 0.85rem; color: #475569; }
+.view-btn{
+background-color: #2563eb;
+color: white;
+padding: 0.5rem 1rem;
+border-radius: 6px;
+cursor: pointer;
+}
 </style>
