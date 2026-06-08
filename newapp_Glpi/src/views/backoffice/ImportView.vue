@@ -20,6 +20,17 @@ const error = ref('')
 
 const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']
 
+// MIME correct par extension : GLPI rejette "application/octet-stream"
+// (erreur "Type de fichier invalide"). On force le bon type image.
+const MIME_BY_EXT = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp'
+}
+
 /**
  * Extrait les images du ZIP en objets File, indexés par nom SANS extension
  * (ex. "PC-ADM-001.jpg" -> clé "PC-ADM-001"), pour les lier aux éléments
@@ -34,9 +45,13 @@ async function extractImagesFromZip(zipFile) {
     if (!fileName) continue
     const ext = fileName.split('.').pop().toLowerCase()
     if (!IMAGE_EXT.includes(ext)) continue
+    // On force le type MIME selon l'extension (sinon "application/octet-stream"
+    // -> GLPI renvoie "Type de fichier invalide").
+    const mime = MIME_BY_EXT[ext] || 'application/octet-stream'
     const blob = await entry.async('blob')
+    const typedBlob = blob.slice(0, blob.size, mime) // ré-applique le bon MIME
     const baseName = fileName.replace(/\.[^.]+$/, '')
-    images[baseName] = new File([blob], fileName, { type: blob.type || 'application/octet-stream' })
+    images[baseName] = new File([typedBlob], fileName, { type: mime })
   }
   return images
 }

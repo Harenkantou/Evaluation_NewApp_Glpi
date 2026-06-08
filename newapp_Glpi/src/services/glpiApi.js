@@ -88,19 +88,28 @@ export async function getDocuments(token, includeDeleted = false) {
   return normalizeList(data, includeDeleted)
 }
 
-// ---------- Écriture (création) v2 ----------
+// ---------- Écriture (création) ----------
+// Computer/Monitor créés via API v1 : elle accepte les champs PLATS
+// (locations_id, manufacturers_id, states_id, users_id), contrairement
+// à la v2 qui attend des objets imbriqués {id:...} et ignore les *_id plats.
 export async function createComputer(token, payload) {
-  const { data } = await api.post(`${V}/Assets/Computer`, payload, auth(token))
+  const session = await getSessionToken()
+  const { data } = await legacy.post('/Computer', { input: payload },
+    { headers: { 'Session-Token': session } })
   return data
 }
 
 export async function createMonitor(token, payload) {
-  const { data } = await api.post(`${V}/Assets/Monitor`, payload, auth(token))
+  const session = await getSessionToken()
+  const { data } = await legacy.post('/Monitor', { input: payload },
+    { headers: { 'Session-Token': session } })
   return data
 }
 
 export async function createTicket(token, payload) {
-  const { data } = await api.post(`${V}/Assistance/Ticket`, payload, auth(token))
+  const session = await getSessionToken()
+  const { data } = await legacy.post('/Ticket', { input: payload },
+    { headers: { 'Session-Token': session } })
   return data
 }
 
@@ -160,6 +169,49 @@ export async function findOrCreateDropdown(itemtype, name) {
   }
 }
 
+// ---------- Utilisateurs via API v1 : find-or-create ----------
+// La colonne "User" du CSV contient un nom (ex. "Rakoto Jean", "ITU Labs").
+// GLPI identifie un user par son login (champ name). On cherche d'abord par
+// nom, sinon on crée un user dont le login = le nom du CSV.
+// Renvoie l'id du user, ou null si la valeur est vide.
+const _userCache = {} // { "Rakoto Jean": 12, ... }
+
+export async function findOrCreateUser(name) {
+  if (!name || !name.trim()) return null
+  const clean = name.trim()
+  if (_userCache[clean] !== undefined) return _userCache[clean]
+
+  const session = await getSessionToken()
+  const headers = { 'Session-Token': session }
+
+  // 1) Chercher un user existant dont le login (name) correspond
+  try {
+    const { data } = await legacy.get('/User', {
+      headers: { ...headers, 'Range': '0-9999' }
+    })
+    const list = Array.isArray(data) ? data : (data?.data || [])
+    const found = list.find((u) => u.name === clean)
+    if (found?.id) {
+      _userCache[clean] = found.id
+      return found.id
+    }
+  } catch (e) { /* on tente la création */ }
+
+  // 2) Créer le user (login = nom du CSV ; realname rempli aussi)
+  try {
+    const { data } = await legacy.post('/User',
+      { input: { name: clean, realname: clean } },
+      { headers }
+    )
+    const id = extractId(data)
+    _userCache[clean] = id
+    return id
+  } catch (e) {
+    _userCache[clean] = null
+    return null
+  }
+}
+
 // ---------- Images : upload via API v1 (multipart fiable) + liaison ----------
 /**
  * Envoie une image comme Document via l'API v1 (apirest.php/Document).
@@ -171,20 +223,29 @@ export async function uploadDocument(token, file, name, itemtype = null, itemsId
   const manifest = { input: { name: name || file.name, _filename: [file.name] } }
 
   const form = new FormData()
-  form.append('uploadManifest', new Blob([JSON.stringify(manifest)], { type: 'application/json' }))
+  form.append('uploadManifest', JSON.stringify(manifest))
   form.append('filename[0]', file, file.name)
 
-  const { data } = await legacy.post('/Document', form, {
-    headers: { 'Session-Token': session },
-    transformRequest: (d, headers) => {
-      delete headers['Content-Type']
-      delete headers['content-type']
-      return d
-    }
+  // On reste sur le PROXY Vite (URL relative /glpi-legacy) => pas de CORS.
+  // On utilise fetch (et NON le client axios "legacy") car axios impose un
+  // Content-Type: application/json par défaut, ce qui écrase le multipart et
+  // fait planter GLPI (json_decode null -> 500).
+  // Avec fetch + FormData, le navigateur pose automatiquement
+  // "multipart/form-data; boundary=..." correct.
+  const legacyBase = import.meta.env.VITE_GLPI_LEGACY_URL || '/glpi-legacy'
+
+  const res = await fetch(`${legacyBase}/Document/`, {
+    method: 'POST',
+    headers: { 'Session-Token': session }, // surtout PAS de Content-Type ici
+    body: form
   })
+  if (!res.ok) {
+    throw new Error(`Upload Document HTTP ${res.status}`)
+  }
+  const data = await res.json()
   const docId = extractId(data)
 
-  // Lier le document à l'élément (Computer/Monitor)
+  // Lier le document à l'élément (Computer/Monitor) — JSON simple via proxy
   if (docId && itemtype && itemsId) {
     try {
       await legacy.post('/Document_Item',
