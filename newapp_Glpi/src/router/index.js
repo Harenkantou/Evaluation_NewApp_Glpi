@@ -9,6 +9,7 @@ import ResetView from '@/views/backoffice/ResetView.vue'
 import TicketsView from '@/views/backoffice/TicketsView.vue'
 //import GlpiTicketsView from '@/views/glpi/GlpiTicketsView.vue'
 import TicketDetailView from '@/views/backoffice/TicketDetailView.vue'
+import CreateTicketView from '@/views/frontoffice/CreateTicketView.vue'
 const routes = [
   { path: '/', redirect: '/admin/dashboard' },
 
@@ -22,6 +23,8 @@ const routes = [
   { path: '/admin/reset', name: 'reset', component: ResetView, meta: { requiresAuth: true } },
   { path: '/admin/tickets', name: 'tickets', component: TicketsView, meta: { requiresAuth: true } },
   { path: '/admin/tickets/:id', name: 'ticket-detail', component: TicketDetailView, meta: { requiresAuth: true } },
+  { path: '/elements', name:'fo-elements', component:ElementListView},
+  { path: '/nouveau-ticket', name:'fo-create-tocket', component:CreateTicketView},
 ]
 
 const router = createRouter({
