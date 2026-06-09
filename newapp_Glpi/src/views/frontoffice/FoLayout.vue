@@ -2,8 +2,8 @@
 // FrontOffice public : pas d'authentification, pas de deconnexion.
 // Juste un menu de navigation partage par les pages publiques.
 const links = [
-  { name: 'fo-elements', label: 'E< lements' },
-  { name: 'fo-create-ticket', label: 'Nouveau ticket' }
+  { name: 'fo-elements', label: 'Éléments', icon: '📋' },
+  { name: 'fo-create-ticket', label: 'Nouveau ticket', icon: '➕' }
 ]
 </script>
 

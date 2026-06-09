@@ -28,7 +28,7 @@ const routes = [
   
   //Page frontOffice sans auth
   { path: '/elements', name:'fo-elements', component:ElementListView},
-  { path: '/nouveau-ticket', name:'fo-create-tocket', component:CreateTicketView},
+  { path: '/nouveau-ticket', name:'fo-create-ticket', component:CreateTicketView},
 
 ]
 

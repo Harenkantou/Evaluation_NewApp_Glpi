@@ -5,6 +5,9 @@
         <h1>NewApp GLPI</h1>
       </div>
       <nav class="top-nav">
+        <router-link to="/elements">📋 Éléments</router-link>
+        <router-link to="/nouveau-ticket">➕ Nouveau ticket</router-link>
+        <div class="nav-separator"></div>
         <router-link to="/login">Connexion</router-link>
         <router-link to="/admin/dashboard">Tableau de bord</router-link>
         <router-link to="/admin/import">Importer</router-link>
@@ -70,6 +73,12 @@ html, body {
 }
 .top-nav a:hover {
   background: rgba(255,255,255,0.16);
+}
+.nav-separator {
+  width: 1px;
+  height: 1.5rem;
+  background: rgba(255,255,255,0.2);
+  margin: 0 0.25rem;
 }
 .app-main {
   padding: 2rem 1.5rem;
