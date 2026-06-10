@@ -2,12 +2,12 @@
 import { ref } from 'vue'
 import JSZip from 'jszip'
 import BoLayout from '@/components/backoffice/BoLayout.vue'
-import { parseCsvFiles } from '@/services/csv'
+import { importAll } from '@/services/import'
 import { useGlpiStore } from '@/stores/glpi'
 
 const glpi = useGlpiStore()
 
-// Variables pour les 4 fichiers obligatoires
+// 4 fichiers obligatoires
 const fileElements = ref(null)
 const fileTickets = ref(null)
 const fileCosts = ref(null)
@@ -15,43 +15,24 @@ const fileImages = ref(null)
 
 const loading = ref(false)
 const progress = ref(0)
+const phase = ref('')
 const result = ref(null)
 const error = ref('')
 
 const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']
 
-// MIME correct par extension : GLPI rejette "application/octet-stream"
-// (erreur "Type de fichier invalide"). On force le bon type image.
-const MIME_BY_EXT = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  bmp: 'image/bmp'
-}
-
-/**
- * Extrait les images du ZIP en objets File, indexés par nom SANS extension
- * (ex. "PC-ADM-001.jpg" -> clé "PC-ADM-001"), pour les lier aux éléments
- * portant le même Name.
- */
+// Extrait les images du ZIP en { filename, data: Uint8Array }
 async function extractImagesFromZip(zipFile) {
   const zip = await JSZip.loadAsync(zipFile)
-  const images = {}
+  const images = []
   const entries = Object.values(zip.files).filter((f) => !f.dir)
   for (const entry of entries) {
     const fileName = entry.name.split('/').pop()
-    if (!fileName) continue
+    if (!fileName || fileName.startsWith('.') || entry.name.includes('__MACOSX')) continue
     const ext = fileName.split('.').pop().toLowerCase()
     if (!IMAGE_EXT.includes(ext)) continue
-    // On force le type MIME selon l'extension (sinon "application/octet-stream"
-    // -> GLPI renvoie "Type de fichier invalide").
-    const mime = MIME_BY_EXT[ext] || 'application/octet-stream'
-    const blob = await entry.async('blob')
-    const typedBlob = blob.slice(0, blob.size, mime) // ré-applique le bon MIME
-    const baseName = fileName.replace(/\.[^.]+$/, '')
-    images[baseName] = new File([typedBlob], fileName, { type: mime })
+    const data = await entry.async('uint8array')
+    images.push({ filename: fileName, data })
   }
   return images
 }
@@ -60,39 +41,49 @@ async function submit() {
   error.value = ''
   result.value = null
 
-  // Vérification que les 4 fichiers sont présents
   if (!fileElements.value || !fileTickets.value || !fileCosts.value || !fileImages.value) {
     error.value = 'Veuillez sélectionner les 4 fichiers demandés.'
     return
   }
 
   loading.value = true
+  progress.value = 0
   try {
-    progress.value = 10
-
-    // Purge totale avant import (repart d'une base propre)
+    // Purge totale avant import (repart propre)
+    phase.value = 'Réinitialisation...'
     await glpi.purgeAllData()
+    progress.value = 15
+
+    // Extraire les images du ZIP
+    phase.value = 'Lecture du ZIP...'
+    const images = await extractImagesFromZip(fileImages.value)
     progress.value = 25
 
-    // 1) Lire et parser les fichiers CSV
-    const csvFilesToParse = [fileElements.value, fileTickets.value, fileCosts.value]
-    const parsed = await parseCsvFiles(csvFilesToParse)
-    progress.value = 35
+    // Lancer l'import (tout ou rien sur les CSV)
+    const res = await importAll({
+      feuille1: fileElements.value,
+      feuille2: fileTickets.value,
+      feuille3: fileCosts.value,
+      images,
+      onProgress: (p) => {
+        if (p.message) phase.value = p.message
+        if (p.total) {
+          // progression indicative selon la phase
+          const base = { elements: 30, tickets: 60, costs: 75, images: 85 }[p.phase] || progress.value
+          progress.value = Math.min(95, base + Math.round((p.done / p.total) * 10))
+        }
+      }
+    })
 
-    // 2) Extraire les images du ZIP (objets File)
-    const images = await extractImagesFromZip(fileImages.value)
-    progress.value = 50
-
-    // 3) Envoyer CSV + images vers GLPI (API)
-    const importResult = await glpi.importToGlpi(parsed, images)
-    progress.value = 90
-
-    result.value = importResult
+    if (!res.success) {
+      throw new Error(res.message)
+    }
+    result.value = res.details
     progress.value = 100
-
+    phase.value = 'Terminé'
   } catch (e) {
     progress.value = 0
-    error.value = "Erreur fatale : " + (e.message || "inconnue")
+    error.value = 'Erreur fatale : ' + (e.message || 'inconnue')
       + ". Loi du tout ou rien appliquée : aucune nouvelle donnée n'a été insérée."
   } finally {
     loading.value = false
@@ -121,9 +112,8 @@ async function submit() {
         <input type="file" accept=".zip" @change="e => fileImages = e.target.files[0]" />
       </label>
 
-      <!-- Barre de progression -->
       <div v-if="loading" class="progress-box">
-        <label>Progression de l'import : {{ progress }}%</label>
+        <label>{{ phase }} — {{ progress }}%</label>
         <progress :value="progress" max="100"></progress>
       </div>
 
@@ -136,23 +126,18 @@ async function submit() {
     <div v-if="result" class="card success">
       <h2>Import terminé ✅</h2>
       <ul class="stats">
-        <li><strong>{{ result.computers }}</strong> ordinateurs</li>
-        <li><strong>{{ result.monitors }}</strong> écrans</li>
+        <li><strong>{{ result.elements }}</strong> éléments</li>
+        <li><strong>{{ result.elementsDuplicates }}</strong> doublons ignorés</li>
         <li><strong>{{ result.tickets }}</strong> tickets</li>
-        <li><strong>{{ result.links }}</strong> liaisons</li>
-        <li><strong>{{ result.images }}</strong> images</li>
+        <li><strong>{{ result.costs }}</strong> coûts</li>
       </ul>
-      <div v-if="result.warnings && result.warnings.length" class="warnings">
-        <h3>Avertissements</h3>
-        <ul><li v-for="(w, i) in result.warnings" :key="i">⚠️ {{ w }}</li></ul>
-      </div>
+      <p class="images-line">Images : {{ result.images }}</p>
     </div>
   </BoLayout>
 </template>
 
 <style scoped>
 h1 { margin-top: 0; }
-.hint { color: #64748b; margin-bottom: 1.5rem; }
 .card {
   background: #fff; border-radius: 12px; padding: 1.5rem;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1); max-width: 560px; margin-bottom: 1.5rem;
@@ -163,7 +148,6 @@ input[type="file"] {
   width: 100%; padding: 0.5rem; border: 1px dashed #cbd5e1;
   border-radius: 8px; background: #f8fafc;
 }
-.files { list-style: none; padding: 0; margin: 0 0 1rem; color: #475569; font-size: 0.9rem; }
 button {
   background: #2563eb; color: #fff; border: none; padding: 0.7rem 1.4rem;
   border-radius: 8px; cursor: pointer; font-size: 1rem;
@@ -173,7 +157,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 .success { border-left: 4px solid #16a34a; }
 .stats { list-style: none; display: flex; gap: 1.5rem; padding: 0; flex-wrap: wrap; }
 .stats strong { font-size: 1.5rem; color: #2563eb; display: block; }
-.warnings { margin-top: 1rem; color: #92400e; }
+.images-line { margin-top: 1rem; color: #475569; }
 .progress-box { margin-bottom: 1rem; }
 .progress-box label { display: block; margin-bottom: 0.5rem; color: #334155; }
 progress { width: 100%; height: 10px; }

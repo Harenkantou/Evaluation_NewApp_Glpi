@@ -60,32 +60,44 @@ function auth(token) {
   return { headers: { Authorization: `Bearer ${token}` } }
 }
 
-// ---------- Lecture (Assets) v2 ----------
+// ---------- Lecture via API v1 (avec noms de dropdowns) ----------
+// expand_dropdowns=true => l'API renvoie les NOMS (Administration, Dell...)
+// au lieu des ids, pour un affichage direct dans le dashboard/les listes.
+async function legacyGetList(itemtype, includeDeleted) {
+  const session = await getSessionToken()
+  const params = { range: '0-9999', expand_dropdowns: true }
+  if (includeDeleted) params.is_deleted = 1
+  const { data } = await legacy.get(`/${itemtype}`, {
+    headers: { 'Session-Token': session },
+    params
+  })
+  return Array.isArray(data) ? data : (data?.data || [])
+}
+
 export async function getComputers(token, includeDeleted = false) {
-  const { data } = await api.get(`${V}/Assets/Computer${includeDeleted ? '?is_deleted=1' : ''}`, auth(token))
-  return normalizeList(data, includeDeleted)
+  return legacyGetList('Computer', includeDeleted)
 }
 
 export async function getMonitors(token, includeDeleted = false) {
-  const { data } = await api.get(`${V}/Assets/Monitor${includeDeleted ? '?is_deleted=1' : ''}`, auth(token))
-  return normalizeList(data, includeDeleted)
+  return legacyGetList('Monitor', includeDeleted)
 }
 
-// ---------- Lecture (Tickets) v2 ----------
 export async function getTickets(token, includeDeleted = false) {
-  const { data } = await api.get(`${V}/Assistance/Ticket${includeDeleted ? '?is_deleted=1' : ''}`, auth(token))
-  return normalizeList(data, includeDeleted)
+  return legacyGetList('Ticket', includeDeleted)
 }
 
 export async function getTicket(token, id) {
-  const { data } = await api.get(`${V}/Assistance/Ticket/${id}`, auth(token))
+  const session = await getSessionToken()
+  const { data } = await legacy.get(`/Ticket/${id}`, {
+    headers: { 'Session-Token': session },
+    params: { expand_dropdowns: true }
+  })
   return data
 }
 
-// ---------- Lecture (Documents = images) v2 ----------
+// ---------- Lecture (Documents = images) v1 ----------
 export async function getDocuments(token, includeDeleted = false) {
-  const { data } = await api.get(`${V}/Management/Document${includeDeleted ? '?is_deleted=1' : ''}`, auth(token))
-  return normalizeList(data, includeDeleted)
+  return legacyGetList('Document', includeDeleted)
 }
 
 // ---------- Écriture (création) ----------

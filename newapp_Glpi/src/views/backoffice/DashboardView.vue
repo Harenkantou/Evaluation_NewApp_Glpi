@@ -9,6 +9,9 @@ const loading = ref(true)
 const error = ref('')
 const stats = ref({ computers: [], monitors: [], tickets: [] })
 
+// Libellés des types de ticket GLPI (le champ "type" reste numérique)
+const TICKET_TYPE_LABEL = { 1: 'Incident', 2: 'Demande' }
+
 const elementCount = computed(() => stats.value.computers.length + stats.value.monitors.length)
 const ticketCount = computed(() => stats.value.tickets.length)
 
@@ -20,8 +23,13 @@ const elementsByType = computed(() => ({
 const ticketsByType = computed(() => {
   const map = {}
   for (const t of stats.value.tickets) {
-    const k = t.type?.name || t.type || '(non typé)'
-    map[k] = (map[k] || 0) + 1
+    // type peut être un nombre (1/2) ou déjà un libellé selon l'API
+    let label = t.type
+    if (typeof label === 'number' || /^\d+$/.test(String(label))) {
+      label = TICKET_TYPE_LABEL[Number(label)] || `Type ${label}`
+    }
+    label = label || '(non typé)'
+    map[label] = (map[label] || 0) + 1
   }
   return map
 })
