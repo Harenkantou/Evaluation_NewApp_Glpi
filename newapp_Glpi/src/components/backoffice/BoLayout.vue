@@ -10,6 +10,7 @@ const links = [
   { name: 'import', label: 'Importer', icon: '📥' },
   { name: 'reset', label: 'Réinitialiser', icon: '🔄' },
   { name: 'tickets', label: 'Tickets', icon: '🎫' },
+  { name: 'kanban-settings', label: 'Config Kanban', icon: '⚙️'}
 ]
 
 async function handleLogout() {

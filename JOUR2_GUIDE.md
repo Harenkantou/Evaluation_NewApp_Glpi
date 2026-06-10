@@ -10,10 +10,12 @@
 
 | Colonne | Statut GLPI | Code | Malgache (défaut) |
 |---|---|---|---|
-| 1 | Nouveau     | 1 | vaovao |
-| 2 | En cours    | 2 | efa manao |
-| 3 | Résolu      | 5 | vita |
+| 1 | Nouveau               | 1 | vaovao |
+| 2 | En cours (Attribué)   | 2 | efa manao |
+| 3 | Clos                  | 6 | vita |
 
+Note : "En cours" a 2 variantes en GLPI (Attribué=2, Planifié=3) -> on prend
+Attribué (2). "Clos" = 6 (Closed).
 (le drag&drop fera passer le ticket d'un code à l'autre via l'API GLPI)
 
 ---
@@ -86,7 +88,7 @@ npm install vuedraggable@next
 3. répartir les tickets en 3 tableaux selon leur `status` :
    - colNouveau = tickets status==1
    - colEnCours = tickets status==2
-   - colResolu  = tickets status==5
+   - colClos    = tickets status==6
 
 ### Affichage
 - 3 colonnes côte à côte (flex)
@@ -119,10 +121,10 @@ Il faut une fonction `updateTicketStatus(id, status)` dans glpiApi.js :
 ## C.4 Boîte de dialogue conditionnelle
 La consigne : "mettre une boîte de dialogue si 1 changement de statut
 nécessite de saisir des informations supplémentaires".
-Exemple logique : si on passe un ticket vers "Résolu" (status 5),
-GLPI demande souvent une SOLUTION. Donc :
-- si colonne d'arrivée == Résolu -> ouvrir une modale qui demande
-  un texte de solution -> l'envoyer à l'API (ITILSolution ou champ solution)
+Exemple logique : si on passe un ticket vers "Clos" (status 6),
+GLPI demande souvent une SOLUTION avant fermeture. Donc :
+- si colonne d'arrivée == Clos -> ouvrir une modale qui demande
+  un texte de solution -> l'envoyer à l'API (ITILSolution) puis passer status=6
 - sinon -> changement direct sans dialogue
 
 ## C.5 Route + menu
@@ -138,7 +140,7 @@ GLPI demande souvent une SOLUTION. Donc :
 3. C.2 Kanban statique (3 colonnes + tickets + compteurs + couleurs/noms)
 4. C.3 + drag&drop (changer statut)
 5. Bouton Ajouter + clic détail
-6. C.4 boîte de dialogue (solution si -> Résolu)
+6. C.4 boîte de dialogue (solution si -> Clos)
 
 # FONCTIONS API À AJOUTER (dans glpiApi.js)
 - updateTicketStatus(id, status)   // PUT /Ticket/{id}

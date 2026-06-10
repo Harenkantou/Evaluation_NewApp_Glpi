@@ -125,6 +125,26 @@ export async function createTicket(token, payload) {
   return data
 }
 
+export async function updateTicketStatus(token, id, status) {
+  const session = await getSessionToken()
+  const { data } = await legacy.put(`/Ticket/${id}`,
+    { input: { id, status } },
+    { headers: { 'Session-Token': session } }
+  )
+  return data
+}
+
+//Pour la boîte de dialogue lors du changement de statut
+
+export async function addSolution(token, ticketId, content) {
+  const session = await getSessionToken()
+  const { data } = await legacy.post('/ITILSolution',
+    { input: { itemtype: 'Ticket', items_id: ticketId, content } },
+    { headers: { 'Session-Token': session } }
+  )
+  return data
+}
+
 /**
  * Associe un élément (Computer/Monitor) à un ticket.
  * L'endpoint Item_Ticket n'existe PAS en v2 (404) -> API v1.

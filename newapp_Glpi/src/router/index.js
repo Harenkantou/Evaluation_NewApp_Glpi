@@ -9,9 +9,11 @@ import ResetView from '@/views/backoffice/ResetView.vue'
 import TicketsView from '@/views/backoffice/TicketsView.vue'
 //import GlpiTicketsView from '@/views/glpi/GlpiTicketsView.vue'
 import TicketDetailView from '@/views/backoffice/TicketDetailView.vue'
+import KanbanSettingsView from '@/views/backoffice/KanbanSettingsView.vue'
 //route frontoffice
 import ElementListView from '@/views/frontoffice/ElementListView.vue'
 import CreateTicketView from '@/views/frontoffice/CreateTicketView.vue'
+import KanbanView from '@/views/frontoffice/KanbanView.vue'
 const routes = [
   { path: '/', redirect: '/admin/dashboard' },
 
@@ -25,10 +27,12 @@ const routes = [
   { path: '/admin/reset', name: 'reset', component: ResetView, meta: { requiresAuth: true } },
   { path: '/admin/tickets', name: 'tickets', component: TicketsView, meta: { requiresAuth: true } },
   { path: '/admin/tickets/:id', name: 'ticket-detail', component: TicketDetailView, meta: { requiresAuth: true } },
+  { path: '/admin/kanban-settings', name: 'kanban-settings', component: KanbanSettingsView, meta: { requiresAuth: true} },
   
   //Page frontOffice sans auth
   { path: '/elements', name:'fo-elements', component:ElementListView},
   { path: '/nouveau-ticket', name:'fo-create-ticket', component:CreateTicketView},
+  { path: '/kanban', name: 'fo-kanban', component: KanbanView}
 
 ]
 

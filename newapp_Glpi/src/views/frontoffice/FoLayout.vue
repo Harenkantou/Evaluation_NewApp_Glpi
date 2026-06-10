@@ -3,7 +3,8 @@
 // Juste un menu de navigation partage par les pages publiques.
 const links = [
   { name: 'fo-elements', label: 'Éléments', icon: '📋' },
-  { name: 'fo-create-ticket', label: 'Nouveau ticket', icon: '➕' }
+  { name: 'fo-create-ticket', label: 'Nouveau ticket', icon: '➕' },
+  { name: 'fo-kanban', label: 'Tableau Kanban', icon: '📋'}
 ]
 </script>
 
