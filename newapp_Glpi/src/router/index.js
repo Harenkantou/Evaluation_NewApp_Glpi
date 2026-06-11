@@ -15,6 +15,7 @@ import HomeView from '@/views/HomeView.vue'
 import ElementListView from '@/views/frontoffice/ElementListView.vue'
 import CreateTicketView from '@/views/frontoffice/CreateTicketView.vue'
 import KanbanView from '@/views/frontoffice/KanbanView.vue'
+import FoTicketDetailView from '@/views/frontoffice/TicketDetailView.vue'
 const routes = [
   { path: '/', name: 'home', component: HomeView },
 
@@ -33,6 +34,7 @@ const routes = [
   //Page frontOffice sans auth
   { path: '/elements', name:'fo-elements', component:ElementListView},
   { path: '/nouveau-ticket', name:'fo-create-ticket', component:CreateTicketView},
+  { path: '/tickets/:id', name:'fo-ticket-detail', component:FoTicketDetailView},
   { path: '/kanban', name: 'fo-kanban', component: KanbanView}
 
 ]

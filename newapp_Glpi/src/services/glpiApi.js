@@ -82,6 +82,22 @@ export async function getMonitors(token, includeDeleted = false) {
   return legacyGetList('Monitor', includeDeleted)
 }
 
+export async function getPrinters(token, includeDeleted = false) {
+  return legacyGetList('Printer', includeDeleted)
+}
+
+export async function getPhones(token, includeDeleted = false) {
+  return legacyGetList('Phone', includeDeleted)
+}
+
+export async function getPeripherals(token, includeDeleted = false) {
+  return legacyGetList('Peripheral', includeDeleted)
+}
+
+export async function getNetworkEquipments(token, includeDeleted = false) {
+  return legacyGetList('NetworkEquipment', includeDeleted)
+}
+
 export async function getTickets(token, includeDeleted = false) {
   return legacyGetList('Ticket', includeDeleted)
 }
@@ -139,6 +155,16 @@ export async function updateTicketStatus(token, id, status) {
 export async function addSolution(token, ticketId, content) {
   const session = await getSessionToken()
   const { data } = await legacy.post('/ITILSolution',
+    { input: { itemtype: 'Ticket', items_id: ticketId, content } },
+    { headers: { 'Session-Token': session } }
+  )
+  return data
+}
+
+// Ajoute un suivi (followup) à un ticket — utilisé pour le motif de réouverture
+export async function addFollowup(token, ticketId, content) {
+  const session = await getSessionToken()
+  const { data } = await legacy.post('/ITILFollowup',
     { input: { itemtype: 'Ticket', items_id: ticketId, content } },
     { headers: { 'Session-Token': session } }
   )
@@ -305,11 +331,36 @@ export async function deleteComputer(token, id) {
 export async function deleteMonitor(token, id) {
   await purgeLegacy('Monitor', id)
 }
+export async function deletePrinter(token, id) {
+  await purgeLegacy('Printer', id)
+}
+export async function deletePhone(token, id) {
+  await purgeLegacy('Phone', id)
+}
+export async function deletePeripheral(token, id) {
+  await purgeLegacy('Peripheral', id)
+}
+export async function deleteNetworkEquipment(token, id) {
+  await purgeLegacy('NetworkEquipment', id)
+}
 export async function deleteTicket(token, id) {
   await purgeLegacy('Ticket', id)
 }
 export async function deleteDocument(token, id) {
   await purgeLegacy('Document', id)
+}
+
+export async function getUsers(token) {
+  return legacyGetList('User')
+}
+
+export async function linkUserToTicket(token, ticketId, userId, type = 2) {
+  const session = await getSessionToken()
+  const { data } = await legacy.post('/Ticket_User',
+    { input: { tickets_id: ticketId, users_id: userId, type } },
+    { headers: { 'Session-Token': session } }
+  )
+  return data
 }
 
 // ---------- Helpers ----------

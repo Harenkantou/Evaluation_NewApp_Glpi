@@ -3,9 +3,11 @@ import { ref } from 'vue'
 import {
   initSession,
   getComputers, getMonitors, getTickets, getDocuments,
+  getPrinters, getPhones, getPeripherals, getNetworkEquipments,
   createComputer, createMonitor, createTicket, linkItemToTicket,
   uploadDocument, findOrCreateDropdown,
-  deleteComputer, deleteMonitor, deleteTicket, deleteDocument
+  deleteComputer, deleteMonitor, deleteTicket, deleteDocument,
+  deletePrinter, deletePhone, deletePeripheral, deleteNetworkEquipment
 } from '@/services/glpiApi'
 
 /**
@@ -147,10 +149,26 @@ export const useGlpiStore = defineStore('glpi', () => {
   // ---------- LECTURE (dashboard / listes) ----------
   async function fetchStats() {
     const t = await ensureToken()
-    const [computers, monitors, tickets] = await Promise.all([
-      getComputers(t), getMonitors(t), getTickets(t)
-    ])
-    return { computers, monitors, tickets }
+    const [computers, monitors, printers, phones, peripherals, networkequipments, tickets] =
+      await Promise.all([
+        getComputers(t), getMonitors(t), getPrinters(t), getPhones(t),
+        getPeripherals(t), getNetworkEquipments(t), getTickets(t)
+      ])
+
+    // Tous les éléments fusionnés (avec leur type), pour les stats globales
+    const elements = [
+      ...computers.map((e) => ({ ...e, _type: 'Computer' })),
+      ...monitors.map((e) => ({ ...e, _type: 'Monitor' })),
+      ...printers.map((e) => ({ ...e, _type: 'Printer' })),
+      ...phones.map((e) => ({ ...e, _type: 'Phone' })),
+      ...peripherals.map((e) => ({ ...e, _type: 'Peripheral' })),
+      ...networkequipments.map((e) => ({ ...e, _type: 'NetworkEquipment' }))
+    ]
+
+    return {
+      computers, monitors, printers, phones, peripherals, networkequipments,
+      elements, tickets
+    }
   }
 
   // ---------- PURGE TOTALE (reset) ----------
@@ -181,10 +199,14 @@ export const useGlpiStore = defineStore('glpi', () => {
       return uniqIds([...act2, ...del2]).length
     }
 
-    // Ordre : tickets d'abord (libère les liens), puis assets, puis documents
+    // Ordre : tickets d'abord (libère les liens), puis tous les assets, puis documents
     const remainTickets = await purgeType(getTickets, deleteTicket, 'Ticket')
     const remainComputers = await purgeType(getComputers, deleteComputer, 'Computer')
     const remainMonitors = await purgeType(getMonitors, deleteMonitor, 'Monitor')
+    const remainPrinters = await purgeType(getPrinters, deletePrinter, 'Printer')
+    const remainPhones = await purgeType(getPhones, deletePhone, 'Phone')
+    const remainPeripherals = await purgeType(getPeripherals, deletePeripheral, 'Peripheral')
+    const remainNetwork = await purgeType(getNetworkEquipments, deleteNetworkEquipment, 'NetworkEquipment')
     const remainDocuments = await purgeType(getDocuments, deleteDocument, 'Document')
 
     importedIds.value = { computers: [], monitors: [], tickets: [], documents: [] }
@@ -194,6 +216,10 @@ export const useGlpiStore = defineStore('glpi', () => {
         tickets: remainTickets,
         computers: remainComputers,
         monitors: remainMonitors,
+        printers: remainPrinters,
+        phones: remainPhones,
+        peripherals: remainPeripherals,
+        networkequipments: remainNetwork,
         documents: remainDocuments
       },
       errors
