@@ -21,7 +21,7 @@ const columns = ref({
   6: []
 })
 
-// Réglages SQLite : { 1: {color,label_mg}, 2: {...}, 6: {...} }
+// Réglages SQLite : { 1: {color,label_fr}, 2: {...}, 6: {...} }
 const settings = ref({})
 
 const loading = ref(true)

@@ -5,11 +5,19 @@
   <main class="home">
     <section class="hero">
       <p class="eyebrow">NewApp GLPI</p>
-      <h1>Base de l'application</h1>
+      <h1>Bienvenue</h1>
       <p>
-        Cette version garde une structure simple et centrale pour démarrer le
-        projet NewApp GLPI.
+        Veuillez choisir votre espace :
       </p>
+
+      <div class="action-buttons">
+        <router-link to="/elements" class="btn btn-primary">
+          📋 FrontOffice - Consulter et créer des tickets
+        </router-link>
+        <router-link to="/login" class="btn btn-secondary">
+          🔐 BackOffice - Administration
+        </router-link>
+      </div>
     </section>
   </main>
 </template>
@@ -51,6 +59,48 @@ p {
   font-size: 1.05rem;
   line-height: 1.65;
   color: #334155;
+}
+
+.action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.btn {
+  padding: 1rem 1.5rem;
+  border-radius: 12px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+  display: inline-block;
+  text-align: center;
+  cursor: pointer;
+  border: none;
+}
+
+.btn-primary {
+  background: #3b82f6;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #2563eb;
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(59, 130, 246, 0.3);
+}
+
+.btn-secondary {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.btn-secondary:hover {
+  background: #cbd5e1;
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
 }
 
 </style>

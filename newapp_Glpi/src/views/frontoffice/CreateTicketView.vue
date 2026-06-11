@@ -77,7 +77,8 @@ async function submit() {
   submitting.value = true
   try {
     // 1) Créer le ticket
-    const res = await createTicket(null, {
+    const t = await glpi.ensureToken()
+    const res = await createTicket(t, {
       name: form.value.titre.trim(),
       content: form.value.description.trim(),
       type: Number(form.value.type),
@@ -92,7 +93,7 @@ async function submit() {
     for (const el of elements.value) {
       if (selected.value.has(keyOf(el))) {
         try {
-          await linkItemToTicket(null, ticketId, el.itemtype, el.id)
+          await linkItemToTicket(t, ticketId, el.itemtype, el.id)
           links++
         } catch (e) { /* liaison non bloquante */ }
       }

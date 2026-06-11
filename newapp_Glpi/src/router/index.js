@@ -11,11 +11,12 @@ import TicketsView from '@/views/backoffice/TicketsView.vue'
 import TicketDetailView from '@/views/backoffice/TicketDetailView.vue'
 import KanbanSettingsView from '@/views/backoffice/KanbanSettingsView.vue'
 //route frontoffice
+import HomeView from '@/views/HomeView.vue'
 import ElementListView from '@/views/frontoffice/ElementListView.vue'
 import CreateTicketView from '@/views/frontoffice/CreateTicketView.vue'
 import KanbanView from '@/views/frontoffice/KanbanView.vue'
 const routes = [
-  { path: '/', redirect: '/admin/dashboard' },
+  { path: '/', name: 'home', component: HomeView },
 
   // Page publique de connexion
   { path: '/login', name: 'login', component: LoginView },

@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import BoLayout from '@/components/backoffice/BoLayout.vue'
-import { getSettings, saveSettings } from '@/services/sqliteService'
+import { getSettings, saveSettings, resetSettings } from '@/services/sqliteService'
 
 // Réglages des 3 statuts : [{ status_id, color, label_mg, label_fr }]
 const settings = ref([])
@@ -32,6 +32,17 @@ async function save() {
   }
 }
 
+async function reset() {
+  saved.value = false
+  error.value = ''
+  try {
+    await resetSettings()
+    saved.value = true
+  } catch (e) {
+    error.value = 'Reinitialisation echouée: ' + (e.message || '')
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -59,6 +70,7 @@ onMounted(load)
 
       <div class="actions">
         <button class="primary" @click="save">💾 Enregistrer</button>
+        <button class="reset" @click="reset"> Réinitialiser </button>
         <span v-if="saved" class="ok">✅ Enregistré dans SQLite</span>
         <span v-if="error" class="err">{{ error }}</span>
       </div>
@@ -93,4 +105,12 @@ h1 { margin-top: 0; }
 .primary { background: #2563eb; color: #fff; border: none; padding: 0.6rem 1.4rem; border-radius: 8px; cursor: pointer; }
 .ok { color: #16a34a; }
 .err { color: #dc2626; }
+
+.reset { 
+  background: #e2e8f0; 
+  border: none; 
+  padding: 0.6rem 1.4rem; 
+  border-radius: 8px; 
+  cursor: pointer; 
+}
 </style>

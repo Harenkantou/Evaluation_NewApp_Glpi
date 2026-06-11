@@ -18,8 +18,8 @@ const STORAGE_KEY = 'newapp_kanban_db'
 // Valeurs par défaut (statuts retenus : Nouveau=1, En cours/Attribué=2, Clos=6)
 const DEFAULTS = [
   { status_id: 1, color: '#FFD700', label_mg: 'vaovao',    label_fr: 'Nouveau' },
-  { status_id: 2, color: '#87CEEB', label_mg: 'efa manao', label_fr: 'En cours' },
-  { status_id: 6, color: '#90EE90', label_mg: 'vita',      label_fr: 'Clos' }
+  { status_id: 2, color: '#87CEEB', label_mg: 'efa manao', label_fr: 'In Progress' },
+  { status_id: 6, color: '#90EE90', label_mg: 'vita',      label_fr: 'Terminé' }
 ]
 let SQL = null   // moteur sql.js
 let db = null    // instance de base
@@ -29,7 +29,7 @@ async function ensureDb() {
   if (!SQL) {
     SQL = await initSqlJs({
       // Utilisation d'un CDN stable pour récupérer le fichier sql-wasm.wasm
-      locateFile: (file) => `https://sql.js.org/dist/${file}`
+      locateFile: (file) => `/public/${file}`
     })
   }
   const saved = localStorage.getItem(STORAGE_KEY)
