@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import BoLayout from '@/components/backoffice/BoLayout.vue'
 import { getSettings, saveSettings, resetSettings } from '@/services/sqliteService'
 
-// Réglages des 3 statuts : [{ status_id, color, label_mg, label_fr }]
+// Réglages des 3 statuts : [{ statusId, color, labelMg, labelFr }]
 const settings = ref([])
 const loading = ref(true)
 const saved = ref(false)
@@ -53,18 +53,18 @@ onMounted(load)
 
     <div v-if="loading" class="info">Chargement...</div>
     <div v-else class="card">
-      <div v-for="s in settings" :key="s.status_id" class="row">
+      <div v-for="s in settings" :key="s.statusId" class="row">
         <div class="label">
-          {{ s.label_fr || ('Statut ' + s.status_id) }}
-          <small>(code {{ s.status_id }})</small>
+          {{ s.labelFr || ('Statut ' + s.statusId) }}
+          <small>(code {{ s.statusId }})</small>
         </div>
         <div class="field">
           <label>Couleur</label>
           <input type="color" v-model="s.color" />
         </div>
         <div class="field grow">
-          <label>Nom malgache</label>
-          <input type="text" v-model="s.label_mg" placeholder="ex: vaovao" />
+          <label>Nom affiché</label>
+          <input type="text" v-model="s.labelFr" placeholder="ex: Nouveau / In Progress / Terminé" />
         </div>
       </div>
 

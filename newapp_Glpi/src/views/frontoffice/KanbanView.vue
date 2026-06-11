@@ -48,9 +48,12 @@ async function load() {
     const t = await glpi.ensureToken()
     const [tickets, cfgList] = await Promise.all([getTickets(t), getSettings()])
 
-    // indexer les réglages par status_id
+    // indexer les réglages par statusId
     const cfg = {}
-    for (const s of cfgList) cfg[s.status_id] = s
+    for (const s of cfgList) {
+      const id = s.statusId ?? s.status_id
+      if (id != null) cfg[id] = s
+    }
     settings.value = cfg
 
     // répartir les tickets par statut
@@ -70,7 +73,15 @@ async function load() {
 
 // helper d'affichage
 function colColor(code) { return settings.value[code]?.color || '#f1f5f9' }
-function colLabel(code) { return settings.value[code]?.label_mg || `Statut ${code}` }
+function colLabel(code) {
+  const cfg = settings.value[code] || {}
+  const defaultLabels = {
+    1: 'Nouveau',
+    2: 'In Progress',
+    6: 'Terminé'
+  }
+  return cfg.labelFr || cfg.label_mg || cfg.labelMg || defaultLabels[code] || `Statut ${code}`
+}
 
 // ---------- Drag & drop ----------
 // vuedraggable émet @change sur la liste de destination avec { added }
