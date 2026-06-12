@@ -33,7 +33,17 @@ const STATUS_MAP = {
 }
 
 const TICKET_TYPE_MAP = { incident: 1, demande: 2, request: 2 }
-const TICKET_STATUS_MAP = { new: 1, assigned: 2, planned: 3, waiting: 4, solved: 5, closed: 6 }
+// On ne conserve que 3 statuts : New (1), In Progress/assigned (2) et Closed (6).
+// Les autres statuts GLPI sont ramenés vers le plus proche de ces trois.
+const TICKET_STATUS_MAP = {
+  new: 1,
+  assigned: 2,
+  'in progress': 2,
+  planned: 2,
+  waiting: 2,
+  solved: 6,
+  closed: 6
+}
 const PRIORITY_MAP = { 'very low': 1, low: 2, medium: 3, high: 4, 'very high': 5, major: 6 }
 
 // ─── Session token (Basic auth via proxy) ────────────────────────────────────
