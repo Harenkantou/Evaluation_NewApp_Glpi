@@ -7,8 +7,16 @@ import {
   createComputer, createMonitor, createTicket, linkItemToTicket,
   uploadDocument, findOrCreateDropdown,
   deleteComputer, deleteMonitor, deleteTicket, deleteDocument,
-  deletePrinter, deletePhone, deletePeripheral, deleteNetworkEquipment
+  deletePrinter, deletePhone, deletePeripheral, deleteNetworkEquipment,
+  getDropdownList, deleteDropdown
 } from '@/services/glpiApi'
+
+// Dropdowns créés lors de l'import : purgés aussi par le reset.
+const DROPDOWN_TYPES = [
+  'Location', 'Manufacturer', 'State',
+  'ComputerModel', 'MonitorModel', 'PrinterModel',
+  'PhoneModel', 'PeripheralModel', 'NetworkEquipmentModel'
+]
 
 /**
  * Store GLPI : token OAuth2 + opérations métier
@@ -199,6 +207,23 @@ export const useGlpiStore = defineStore('glpi', () => {
       return uniqIds([...act2, ...del2]).length
     }
 
+    // Purge d'un dropdown (Location, Manufacturer, State, *Model...).
+    // À faire APRÈS les assets/tickets : leurs références doivent être libérées.
+    async function purgeDropdown(itemtype) {
+      for (let pass = 0; pass < 3; pass++) {
+        const ids = uniqIds(await getDropdownList(itemtype))
+        if (ids.length === 0) return 0
+        for (const id of ids) {
+          try {
+            await deleteDropdown(itemtype, id)
+          } catch (e) {
+            errors.push(`${itemtype} #${id} : ${errMsg(e)}`)
+          }
+        }
+      }
+      return uniqIds(await getDropdownList(itemtype)).length
+    }
+
     // Ordre : tickets d'abord (libère les liens), puis tous les assets, puis documents
     const remainTickets = await purgeType(getTickets, deleteTicket, 'Ticket')
     const remainComputers = await purgeType(getComputers, deleteComputer, 'Computer')
@@ -208,6 +233,12 @@ export const useGlpiStore = defineStore('glpi', () => {
     const remainPeripherals = await purgeType(getPeripherals, deletePeripheral, 'Peripheral')
     const remainNetwork = await purgeType(getNetworkEquipments, deleteNetworkEquipment, 'NetworkEquipment')
     const remainDocuments = await purgeType(getDocuments, deleteDocument, 'Document')
+
+    // Enfin : les dropdowns créés à l'import (Location, Manufacturer, State, modèles)
+    const remainDropdowns = {}
+    for (const dt of DROPDOWN_TYPES) {
+      remainDropdowns[dt] = await purgeDropdown(dt)
+    }
 
     importedIds.value = { computers: [], monitors: [], tickets: [], documents: [] }
 
@@ -220,7 +251,8 @@ export const useGlpiStore = defineStore('glpi', () => {
         phones: remainPhones,
         peripherals: remainPeripherals,
         networkequipments: remainNetwork,
-        documents: remainDocuments
+        documents: remainDocuments,
+        dropdowns: remainDropdowns
       },
       errors
     }

@@ -350,6 +350,17 @@ export async function deleteDocument(token, id) {
   await purgeLegacy('Document', id)
 }
 
+// ---------- Dropdowns : lecture + suppression définitive ----------
+// itemtype = "Location" | "Manufacturer" | "State" | "ComputerModel" | ...
+// Utilisés par le reset pour purger aussi les dropdowns créés à l'import.
+export async function getDropdownList(itemtype) {
+  return legacyGetList(itemtype, false)
+}
+
+export async function deleteDropdown(itemtype, id) {
+  await purgeLegacy(itemtype, id)
+}
+
 export async function getUsers(token) {
   return legacyGetList('User')
 }
