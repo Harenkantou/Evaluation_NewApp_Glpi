@@ -1,15 +1,17 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import draggable from 'vuedraggable'
 import FoLayout from '@/views/frontoffice/FoLayout.vue'
 import { useGlpiStore } from '@/stores/glpi'
 import {
-  getTickets, getTicket, createTicket,
+  getTickets, getTicket,
   updateTicketStatus, addSolution, addFollowup, getUsers, linkUserToTicket
 } from '@/services/glpiApi'
 import { getSettings } from '@/services/sqliteService'
 
 const glpi = useGlpiStore()
+const router = useRouter()
 
 // Les 3 statuts/colonnes (codes GLPI)
 const STATUSES = [1, 2, 6]
@@ -25,11 +27,6 @@ const error = ref('')
 
 // --- Modale détails ---
 const detail = ref(null)
-
-// --- Modale ajout ---
-const showAdd = ref(false)
-const newTitre = ref('')
-const newContent = ref('')
 
 // --- Modale solution (passage vers Clos) ---
 const showSolution = ref(false)
@@ -225,22 +222,9 @@ async function cancelAssign() {
 }
 
 // ---------- Ajouter un ticket ----------
-async function submitAdd() {
-  if (!newTitre.value.trim()) return
-  try {
-    const t = await glpi.ensureToken()
-    await createTicket(t, {
-      name: newTitre.value.trim(),
-      content: newContent.value.trim(),
-      status: 1
-    })
-    showAdd.value = false
-    newTitre.value = ''
-    newContent.value = ''
-    await load()
-  } catch (e) {
-    error.value = 'Création du ticket échouée : ' + (e.message || '')
-  }
+// Redirige vers la page de création du FrontOffice.
+function goToCreateTicket() {
+  router.push({ name: 'fo-create-ticket' })
 }
 
 // ---------- Détails ----------
@@ -287,24 +271,9 @@ onMounted(load)
           </template>
         </draggable>
 
-        <button v-if="code === 1" class="add-ticket-btn-col" @click="showAdd = true">
+        <button v-if="code === 1" class="add-ticket-btn-col" @click="goToCreateTicket">
           + Ajouter 1 ticket
         </button>
-      </div>
-    </div>
-
-    <!-- Modale : ajouter un ticket -->
-    <div v-if="showAdd" class="overlay" @click.self="showAdd = false">
-      <div class="modal">
-        <h2>Nouveau ticket</h2>
-        <label>Titre</label>
-        <input v-model="newTitre" placeholder="Titre du ticket" />
-        <label>Description</label>
-        <textarea v-model="newContent" rows="4" placeholder="Description"></textarea>
-        <div class="modal-actions">
-          <button class="ghost" @click="showAdd = false">Annuler</button>
-          <button class="primary" @click="submitAdd">Créer</button>
-        </div>
       </div>
     </div>
 
