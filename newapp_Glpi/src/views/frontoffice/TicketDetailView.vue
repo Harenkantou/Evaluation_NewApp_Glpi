@@ -2,6 +2,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import FoLayout from '@/views/frontoffice/FoLayout.vue'
+import { useGlpiStore } from '@/stores/glpi'
+import { getTicket, getTicketCosts} from '@/services/glpiApi'
 
 const route = useRoute()
 const router = useRouter()
@@ -11,6 +13,8 @@ const costs = ref([])
 const loading = ref(true)
 const error = ref('')
 const isEditing = ref(false)
+
+const glpi = useGlpiStore()
 
 // Données d'édition
 const editForm = ref({
@@ -25,11 +29,11 @@ async function load() {
   error.value = ''
   try {
     // TODO: Récupérer le ticket depuis votre API backend
-    // const response = await fetch(`/api/tickets/${route.params.id}`)
-    // ticket.value = await response.json()
+    const response = await fetch(`/api/tickets/${route.params.id}`)
+    ticket.value = await response.json()
     
     // Données d'exemple pour la structure
-    ticket.value = {
+    /*ticket.value = {
       id: route.params.id,
       titre: 'Exemple de ticket détaillé',
       description: 'Description détaillée du ticket...',
@@ -42,23 +46,21 @@ async function load() {
         { id: 1, name: 'PC-ADM-001', type: 'Computer', status: 'Actif', location: 'Bureau 1' },
         { id: 2, name: 'MON-001', type: 'Monitor', status: 'Actif', location: 'Bureau 1' }
       ]
+    }*/
+
+    const t = await glpi.ensureToken()
+    const id = route.params.id
+
+    const tk = await getTicket(t, id) 
+    ticket.value = {
+      titre: tk.name, 
+      description: tk.content,
+      status: tk.status,
     }
     
-    costs.value = [
-      { id: 1, durationSecond: 3600, timeCost: 45.50, fixedCost: 25.00 },
-      { id: 2, durationSecond: 1800, timeCost: 22.75, fixedCost: 0 }
-    ]
-
-    if (isEditing.value) {
-      editForm.value = {
-        titre: ticket.value.titre,
-        description: ticket.value.description,
-        type: ticket.value.type,
-        priority: ticket.value.priority
-      }
-    }
+    costs.value = await getTicketCosts(t, id)
   } catch (e) {
-    error.value = e.message || 'Impossible de charger le ticket'
+    error.value = e.response?.data?.detail || e.messsage || 'Impossible de charger le ticket'
   } finally {
     loading.value = false
   }

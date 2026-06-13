@@ -9,6 +9,7 @@ import {
   updateTicketStatus, addSolution, addFollowup, getUsers, linkUserToTicket
 } from '@/services/glpiApi'
 import { getSettings } from '@/services/sqliteService'
+import { saveCost } from '@/services/costService'
 
 const glpi = useGlpiStore()
 const router = useRouter()
@@ -42,8 +43,20 @@ let pendingAssign = null
 // --- Modale réouverture (depuis Clos -> Nouveau ou In Progress) ---
 const showReopen = ref(false)
 const reopenReason = ref('')
-let pendingReopen = null        // ticket à rouvrir
-let reopenTargetStatus = 1      // statut cible (1 ou 2)
+let pendingReopen = null
+let reopenTargetStatus = 1
+const costPercentReopen = ref(false)
+
+// --- Modale coût (après clôture) ---
+const showCostDialog = ref(false)
+const costAmount = ref('')
+let pendingCost = null
+
+//Modale Annulation
+const getLastCost = ref('')
+const deleteLastCost = ref(false)
+
+
 
 // ---------- Chargement ----------
 async function load() {
@@ -52,7 +65,9 @@ async function load() {
   try {
     const t = await glpi.ensureToken()
     const [tickets, cfgList, usersList] = await Promise.all([
-      getTickets(t), getSettings(), getUsers(t)
+      getTickets(t), 
+      getSettings(), 
+      getUsers(t)
     ])
 
     const cfg = {}
@@ -62,6 +77,7 @@ async function load() {
     }
     settings.value = cfg
     technicians.value = usersList
+
 
     const cols = { 1: [], 2: [], 6: [] }
     for (const tk of tickets) {
@@ -77,19 +93,14 @@ async function load() {
 }
 
 // helpers d'affichage
-function colColor(code) { return settings.value[code]?.color || '#f1f5f9' }
-function colLabel(code) {
-  const cfg = settings.value[code] || {}
-  const defaultLabels = { 1: 'Nouveau', 2: 'In Progress', 6: 'Terminé' }
-  return cfg.labelFr || cfg.label_fr || cfg.label_mg || cfg.labelMg || defaultLabels[code] || `Statut ${code}`
+function colColor(code) { 
+  return settings.value[code]?.color || '#f1f5f9' 
 }
 
-// Un ticket a-t-il déjà un technicien assigné ?
-// (selon l'API, l'info peut être dans users_id_assign / _users_id_assign / team)
-function hasTechnician(ticket) {
-  if (ticket.users_id_assign && Number(ticket.users_id_assign) > 0) return true
-  if (ticket._users_id_assign && Number(ticket._users_id_assign) > 0) return true
-  return false
+function colLabel(code) {
+  const cfg = settings.value[code] || {}
+  const defaultLabels = { 1: 'Nouveau', 2: 'En cours', 6: 'Terminé' }
+  return cfg.labelFr || cfg.label_fr || cfg.label_mg || cfg.labelMg || defaultLabels[code] || `Statut ${code}`
 }
 
 // ---------- Drag & drop ----------
@@ -104,6 +115,9 @@ async function onChange(evt, targetStatus) {
     reopenTargetStatus = targetStatus
     reopenReason.value = ''
     showReopen.value = true
+    costPercentReopen.value = true
+    getLastCost.value = true
+    deleteLastCost.value = true 
     return
   }
 
@@ -123,7 +137,7 @@ async function onChange(evt, targetStatus) {
     return
   }
 
-  // CAS 4 : changement direct (ex. In Progress -> Nouveau)
+  // CAS 4 : changement direct
   try {
     const t = await glpi.ensureToken()
     await updateTicketStatus(t, ticket.id, targetStatus)
@@ -143,9 +157,7 @@ async function confirmReopen() {
   }
   try {
     const t = await glpi.ensureToken()
-    // 1) Tracer le motif comme suivi
     await addFollowup(t, pendingReopen.id, 'Réouverture : ' + reopenReason.value.trim())
-    // 2) Changer le statut (1 ou 2 selon la colonne d'arrivée)
     await updateTicketStatus(t, pendingReopen.id, reopenTargetStatus)
     pendingReopen.status = reopenTargetStatus
   } catch (e) {
@@ -153,6 +165,9 @@ async function confirmReopen() {
   } finally {
     showReopen.value = false
     pendingReopen = null
+    costPercentReopen = false
+    getLastCost = false
+    deleteLastCost = false 
     await load()
   }
 }
@@ -173,13 +188,22 @@ async function confirmClose() {
     }
     await updateTicketStatus(t, pendingClose.id, 6)
     pendingClose.status = 6
+    
+    // Fermer la modale solution
+    showSolution.value = false
+    
+    // Ouvrir la modale de coût
+    pendingCost = pendingClose
+    costAmount.value = ''
+    showCostDialog.value = true
+    
   } catch (e) {
     error.value = 'Clôture échouée : ' + (e.message || '')
-  } finally {
     showSolution.value = false
     pendingClose = null
     await load()
   }
+
 }
 
 async function cancelClose() {
@@ -188,20 +212,59 @@ async function cancelClose() {
   await load()
 }
 
+// ---------- Sauvegarde du coût ----------
+async function confirmCost() {
+  if (!pendingCost) return
+  
+  // Validation du montant
+  const amount = parseFloat(costAmount.value)
+  if (isNaN(amount) || amount <= 0) {
+    alert('❌ Veuillez saisir un montant valide (supérieur à 0)')
+    return
+  }
+  
+  try {
+    // Sauvegarder le coût dans SQLite via costService
+    const result = await saveCost({
+      ticketId: pendingCost.id,
+      ticketName: pendingCost.name || `Ticket #${pendingCost.id}`,
+      cost: amount
+    })
+    
+    console.log('✅ Coût sauvegardé:', result)
+    alert(`✅ Coût de ${amount.toFixed(2)}€ enregistré pour le ticket #${pendingCost.id}`)
+    
+  } catch (e) {
+    console.error('❌ Erreur sauvegarde:', e)
+    alert('❌ Erreur lors de la sauvegarde du coût: ' + (e.response?.data?.message || e.message || 'Erreur inconnue'))
+  } finally {
+    // Fermer la modale et nettoyer
+    showCostDialog.value = false
+    pendingCost = null
+    costAmount.value = ''
+    await load()
+  }
+}
+
+async function deleteCost () {
+  
+}
+async function cancelCost() {
+  showCostDialog.value = false
+  pendingCost = null
+  costAmount.value = ''
+  await load()
+}
+
 // ---------- Attribution technicien ----------
 async function confirmAssign() {
-  if (!pendingAssign || !selectedTechId.value) return
+  if (!pendingAssign || !selectedTechId.value) {
+    error.value = 'Veuillez sélectionner un technicien'
+    return
+  }
   try {
     const t = await glpi.ensureToken()
-    // 1) Lier le technicien — NON bloquant : si la liaison existe déjà
-    //    (ex. le ticket avait déjà été attribué avant un retour en New),
-    //    GLPI renvoie une erreur "doublon" qu'on ignore volontairement.
-    try {
-      await linkUserToTicket(t, pendingAssign.id, selectedTechId.value, 2)
-    } catch (linkErr) {
-      console.warn('Technicien déjà lié ou liaison ignorée:', linkErr?.message)
-    }
-    // 2) Le changement de statut, lui, doit TOUJOURS se faire
+    await linkUserToTicket(t, pendingAssign.id, selectedTechId.value, 2)
     await updateTicketStatus(t, pendingAssign.id, 2)
     pendingAssign.status = 2
   } catch (e) {
@@ -222,7 +285,6 @@ async function cancelAssign() {
 }
 
 // ---------- Ajouter un ticket ----------
-// Redirige vers la page de création du FrontOffice.
 function goToCreateTicket() {
   router.push({ name: 'fo-create-ticket' })
 }
@@ -243,16 +305,20 @@ onMounted(load)
 <template>
   <FoLayout>
     <div class="kanban-head">
-      <h1>Tableau Kanban</h1>
+      <h1>📋 Tableau Kanban</h1>
+      <button class="add-btn" @click="goToCreateTicket">+ Nouveau ticket</button>
     </div>
 
-    <div v-if="loading" class="info">Chargement...</div>
-    <div v-else-if="error" class="error">{{ error }} <button @click="load">Réessayer</button></div>
+    <div v-if="loading" class="info">⏳ Chargement des tickets...</div>
+    <div v-else-if="error" class="error">
+      ❌ {{ error }}
+      <button @click="load" class="retry-btn">Réessayer</button>
+    </div>
 
     <div v-else class="board">
       <div v-for="code in STATUSES" :key="code" class="column" :style="{ background: colColor(code) }">
         <div class="col-head">
-          {{ colLabel(code) }}
+          <span>{{ colLabel(code) }}</span>
           <span class="count">{{ columns[code].length }}</span>
         </div>
 
@@ -271,61 +337,11 @@ onMounted(load)
           </template>
         </draggable>
 
-        <button v-if="code === 1" class="add-ticket-btn-col" @click="goToCreateTicket">
-          + Ajouter 1 ticket
-        </button>
+        <button class="add-ticket-btn-col" @click="goToCreateTicket">+ Ajouter</button>
       </div>
     </div>
 
-    <!-- Modale : solution avant clôture -->
-    <div v-if="showSolution" class="overlay" @click.self="cancelClose">
-      <div class="modal">
-        <h2>Clôturer le ticket</h2>
-        <p class="hint">Veuillez saisir la solution apportée avant de clore.</p>
-        <textarea v-model="solutionText" rows="4" placeholder="Solution..."></textarea>
-        <div class="modal-actions">
-          <button class="ghost" @click="cancelClose">Annuler</button>
-          <button class="primary" @click="confirmClose">Valider la clôture</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Modale : attribuer un technicien (Nouveau -> In Progress) -->
-    <div v-if="showAssignModal" class="overlay" @click.self="cancelAssign">
-      <div class="modal">
-        <h2>Attribuer le ticket</h2>
-        <p class="hint">Veuillez sélectionner un technicien GLPI pour ce ticket.</p>
-        <label for="tech-select">Technicien</label>
-        <select id="tech-select" v-model="selectedTechId" class="tech-select-dropdown">
-          <option value="" disabled>-- Choisir un technicien --</option>
-          <option v-for="tech in technicians" :key="tech.id" :value="tech.id">
-            {{ tech.name }} (ID: {{ tech.id }})
-          </option>
-        </select>
-        <div class="modal-actions">
-          <button class="ghost" @click="cancelAssign">Annuler</button>
-          <button class="primary" @click="confirmAssign" :disabled="!selectedTechId">Valider</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Modale : réouverture (depuis Clos) -->
-    <div v-if="showReopen" class="overlay" @click.self="cancelReopen">
-      <div class="modal">
-        <h2>Rouvrir le ticket</h2>
-        <p class="hint">
-          Ce ticket est clôturé. Indiquez le motif de réouverture
-          (il sera ajouté comme suivi).
-        </p>
-        <textarea v-model="reopenReason" rows="4" placeholder="Motif de réouverture..."></textarea>
-        <div class="modal-actions">
-          <button class="ghost" @click="cancelReopen">Annuler</button>
-          <button class="primary" @click="confirmReopen">Rouvrir</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Modale : détails d'un ticket -->
+    <!-- Modale : détails -->
     <div v-if="detail" class="overlay" @click.self="detail = null">
       <div class="modal">
         <h2>Ticket #{{ detail.id }}</h2>
@@ -338,65 +354,372 @@ onMounted(load)
         </div>
       </div>
     </div>
+
+    <!-- Modale : solution avant clôture -->
+    <div v-if="showSolution" class="overlay" @click.self="cancelClose">
+      <div class="modal">
+        <h2>🔒 Clôturer le ticket</h2>
+        <p class="hint">Veuillez saisir la solution apportée avant de clore.</p>
+        <textarea v-model="solutionText" rows="4" placeholder="Solution..."></textarea>
+        <div class="modal-actions">
+          <button class="ghost" @click="cancelClose">Annuler</button>
+          <button class="primary" @click="confirmClose">Valider la clôture</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale : saisir le coût APRÈS clôture -->
+    <div v-if="showCostDialog" class="overlay" @click.self="cancelCost">
+      <div class="modal cost-modal">
+        <div class="modal-header">
+          <span class="modal-icon">💰</span>
+          <h2>Saisir le coût</h2>
+        </div>
+        
+        <div class="ticket-info">
+          <span class="label">Ticket :</span>
+          <strong>{{ pendingCost?.name || `#${pendingCost?.id}` }}</strong>
+        </div>
+        
+        <div class="form-group">
+          <label>Montant (€)</label>
+          <input 
+            v-model="costAmount" 
+            type="number" 
+            step="0.01"
+            min="0"
+            placeholder="0.00"
+            class="cost-input"
+            autofocus
+            @keyup.enter="confirmCost"
+          />
+        </div>
+        
+        <p class="hint">💡 Saisissez le coût total associé à ce ticket (main d'œuvre, pièces, etc.)</p>
+        
+        <div class="modal-actions">
+          <button class="ghost" @click="cancelCost">Annuler</button>
+          <button class="primary" @click="confirmCost" :disabled="!costAmount || parseFloat(costAmount) <= 0">
+            Valider ({{ costAmount || 0 }} €)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale : attribuer technicien -->
+    <div v-if="showAssignModal" class="overlay" @click.self="cancelAssign">
+      <div class="modal">
+        <h2>👨‍💻 Assigner un technicien</h2>
+        <p><strong>Ticket :</strong> {{ pendingAssign?.name }}</p>
+        
+        <label>Sélectionner un technicien</label>
+        <select v-model="selectedTechId" class="tech-select">
+          <option value="">-- Sélectionner --</option>
+          <option v-for="tech in technicians" :key="tech.id" :value="tech.id">
+            {{ tech.name }} {{ tech.realname ? `(${tech.realname})` : '' }}
+          </option>
+        </select>
+        
+        <div class="modal-actions">
+          <button class="ghost" @click="cancelAssign">Annuler</button>
+          <button class="primary" @click="confirmAssign" :disabled="!selectedTechId">Assigner</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale : réouverture -->
+    <div v-if="showReopen" class="overlay" @click.self="cancelReopen">
+      <div class="modal">
+        <h2>🔄 Réouvrir le ticket</h2>
+        <p><strong>Ticket :</strong> {{ pendingReopen?.name }}</p>
+        
+        <label>Motif de réouverture</label>
+        <textarea v-model="reopenReason" rows="4" placeholder="Motif..."></textarea>
+        
+        <div class="modal-actions">
+          <button class="ghost" @click="cancelReopen">Annuler</button>
+          <button class="primary" @click="confirmReopen" :disabled="!reopenReason.trim()">Réouvrir</button>
+        </div>
+      </div>
+    </div>
   </FoLayout>
 </template>
 
 <style scoped>
-.kanban-head { display: flex; justify-content: space-between; align-items: center; }
-h1 { margin: 0; }
-.info { color: #94a3b8; }
-.error { color: #dc2626; background: #fee2e2; padding: 0.8rem; border-radius: 8px; }
+.kanban-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
 
-.board { display: flex; gap: 1rem; margin-top: 1.5rem; align-items: flex-start; }
+h1 { margin: 0; }
+
+.add-btn {
+  background: #0f766e;
+  color: white;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+.add-btn:hover {
+  background: #0d5c56;
+}
+
+.info { color: #94a3b8; text-align: center; padding: 2rem; }
+
+.error {
+  color: #dc2626;
+  background: #fee2e2;
+  padding: 0.8rem;
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.retry-btn {
+  background: #dc2626;
+  color: white;
+  border: none;
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.board {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  align-items: flex-start;
+  overflow-x: auto;
+}
+
 .column {
-  flex: 1; border-radius: 12px; padding: 0.8rem; min-height: 300px;
+  flex: 1;
+  min-width: 280px;
+  border-radius: 12px;
+  padding: 0.8rem;
+  min-height: 400px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
-.col-head {
-  font-weight: 700; margin-bottom: 0.8rem; display: flex;
-  justify-content: space-between; align-items: center; color: #1e293b;
-}
-.count {
-  background: rgba(0,0,0,0.15); color: #1e293b; border-radius: 999px;
-  padding: 0.1rem 0.6rem; font-size: 0.85rem;
-}
-.col-body { min-height: 250px; display: flex; flex-direction: column; gap: 0.5rem; }
-.card {
-  background: #fff; border-radius: 8px; padding: 0.7rem;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.15); cursor: grab;
-  display: flex; flex-direction: column; gap: 0.2rem;
-}
-.card:hover { background: #f8fafc; }
-.card small { color: #94a3b8; }
 
-.overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
-  display: flex; align-items: center; justify-content: center; z-index: 50;
+.col-head {
+  font-weight: 700;
+  margin-bottom: 0.8rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #1e293b;
 }
-.modal {
-  background: #fff; border-radius: 12px; padding: 1.5rem;
-  width: 420px; max-width: 90vw; display: flex; flex-direction: column;
+
+.count {
+  background: rgba(0,0,0,0.15);
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.85rem;
 }
-.modal h2 { margin-top: 0; }
-.modal label { font-weight: 600; font-size: 0.85rem; margin: 0.5rem 0 0.3rem; }
-.modal input, .modal textarea, .modal select {
-  padding: 0.6rem; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem;
+
+.col-body {
+  min-height: 350px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
-.hint { color: #64748b; font-size: 0.9rem; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 1rem; }
-.ghost { background: #e2e8f0; border: none; padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; }
-.primary { background: #2563eb; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; }
-.primary:disabled { opacity: 0.5; cursor: default; }
-.row { display: flex; padding: 0.4rem 0; border-bottom: 1px solid #f1f5f9; }
-.row span { width: 110px; color: #64748b; }
+
+.card {
+  background: white;
+  border-radius: 8px;
+  padding: 0.7rem;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  transition: all 0.2s;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.card small {
+  color: #94a3b8;
+  font-size: 0.7rem;
+}
 
 .add-ticket-btn-col {
-  width: 100%; margin-top: 0.8rem; background: rgba(255, 255, 255, 0.6);
-  border: 1px dashed #cbd5e1; color: #475569; padding: 0.6rem;
-  border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem;
+  width: 100%;
+  margin-top: 0.8rem;
+  background: rgba(255,255,255,0.6);
+  border: 1px dashed #cbd5e1;
+  color: #475569;
+  padding: 0.6rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
   transition: all 0.15s;
 }
-.add-ticket-btn-col:hover { background: #fff; border-color: #94a3b8; color: #0f172a; }
-.tech-select-dropdown { width: 100%; margin-top: 0.5rem; margin-bottom: 0.5rem; background: #fff; }
-.tech-select-dropdown:focus { border-color: #2563eb; }
+
+.add-ticket-btn-col:hover {
+  background: white;
+  border-color: #94a3b8;
+}
+
+/* Modales */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: white;
+  border-radius: 16px;
+  padding: 1.5rem;
+  width: 450px;
+  max-width: 90vw;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+}
+
+.cost-modal {
+  width: 400px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.modal-icon {
+  font-size: 1.5rem;
+}
+
+.modal h2 {
+  margin: 0;
+}
+
+.ticket-info {
+  background: #f8fafc;
+  padding: 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ticket-info .label {
+  color: #64748b;
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: #1e293b;
+}
+
+.modal input, .modal textarea, .modal select {
+  width: 100%;
+  padding: 0.6rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+.cost-input {
+  font-size: 1.2rem;
+  text-align: center;
+}
+
+.hint {
+  color: #64748b;
+  font-size: 0.8rem;
+  margin-top: 0.5rem;
+}
+
+.row {
+  display: flex;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.row span {
+  width: 100px;
+  color: #64748b;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+}
+
+.ghost {
+  background: #e2e8f0;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.ghost:hover {
+  background: #cbd5e1;
+}
+
+.primary {
+  background: #2563eb;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tech-select {
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 768px) {
+  .board {
+    flex-direction: column;
+  }
+  
+  .modal {
+    width: 95vw;
+  }
+}
 </style>

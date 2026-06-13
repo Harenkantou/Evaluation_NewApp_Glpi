@@ -3,13 +3,15 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import BoLayout from '@/components/backoffice/BoLayout.vue'
 import { useGlpiStore } from '@/stores/glpi'
-import { getTicket } from '@/services/glpiApi'
-
+import { getTicket, getTicketCosts } from '@/services/glpiApi'
+//import { useGlpiStore} from '@/stores/glpi'
+//import { getTicket} from '@/services/glpiApi'
 const route = useRoute()
 const router = useRouter()
 const glpi = useGlpiStore()
 
 const ticket = ref(null)
+const costs = ref([])
 const loading = ref(true)
 const error = ref('')
 
@@ -17,14 +19,26 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
+     const response = await fetch(`/api/tickets/${route.params.id}`)
+    ticket.value = await response.json()
+    
     const t = await glpi.ensureToken()
-    // On récupère l'ID depuis l'URL grâce au routeur (ex: /admin/tickets/5)
-    ticket.value = await getTicket(t, route.params.id)
+    const id = route.params.id
+
+    const tk = await getTicket(t, id) 
+    ticket.value = {
+      titre: tk.name, 
+      description: tk.content,
+      status: tk.status,
+    }
+    
+    costs.value = await getTicketCosts(t, id)
   } catch (e) {
-    error.value = e.response?.data?.detail || e.message || 'Impossible de charger le ticket'
+    error.value = e.response?.data?.detail || e.messsage || 'Impossible de charger le ticket'
   } finally {
     loading.value = false
   }
+
 }
 
 onMounted(load)
@@ -51,10 +65,26 @@ onMounted(load)
       
       <div class="content-box">
         <h3>Description du ticket</h3>
-        <!-- En GLPI le contenu peut parfois contenir des balises HTML -->
         <div class="description" v-html="ticket.content"></div>
       </div>
-    </div>
+
+      <div class="content-box" v-if="costs.length">
+  <h3>Coûts associés</h3>
+  <table class="costs-table">
+    <thead>
+      <tr><th>Durée (s)</th><th>Coût horaire</th><th>Coût fixe</th><th>Coût matériel</th></tr>
+    </thead>
+    <tbody>
+      <tr v-for="c in costs" :key="c.id">
+        <td>{{ c.durationSecond }}</td>
+        <td>{{ c.timeCost }}</td>
+        <td>{{ c.fixedCost }}</td>
+        <td>{{ c.materialCost }}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<p v-else-if="!loading" class="info">Aucun coût enregistré pour ce ticket.</p>    </div>
   </BoLayout>
 </template>
 
@@ -81,4 +111,7 @@ h2 { margin-top: 0; color: #1e293b; padding-right: 100px; }
 .content-box { background: #f8fafc; padding: 1.5rem; border-radius: 8px; border: 1px solid #e2e8f0; }
 .content-box h3 { margin-top: 0; font-size: 1rem; color: #475569; }
 .description { color: #334155; line-height: 1.6; }
+.costs-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+.costs-table th, .costs-table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #e2e8f0; font-size: 0.9rem; }
+.costs-table th { background: #f1f5f9; color: #475569; font-weight: 600; }
 </style>

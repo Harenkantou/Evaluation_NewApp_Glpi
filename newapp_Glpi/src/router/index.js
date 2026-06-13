@@ -7,15 +7,19 @@ import DashboardView from '@/views/backoffice/DashboardView.vue'
 import ImportView from '@/views/backoffice/ImportView.vue'
 import ResetView from '@/views/backoffice/ResetView.vue'
 import TicketsView from '@/views/backoffice/TicketsView.vue'
-//import GlpiTicketsView from '@/views/glpi/GlpiTicketsView.vue'
 import TicketDetailView from '@/views/backoffice/TicketDetailView.vue'
 import KanbanSettingsView from '@/views/backoffice/KanbanSettingsView.vue'
-//route frontoffice
+
+// Vue CostManagement (importer directement au lieu du lazy loading)
+import CostManagement from '@/views/backoffice/CostManagement.vue'
+
+// routes frontoffice
 import HomeView from '@/views/HomeView.vue'
 import ElementListView from '@/views/frontoffice/ElementListView.vue'
 import CreateTicketView from '@/views/frontoffice/CreateTicketView.vue'
 import KanbanView from '@/views/frontoffice/KanbanView.vue'
 import FoTicketDetailView from '@/views/frontoffice/TicketDetailView.vue'
+
 const routes = [
   { path: '/', name: 'home', component: HomeView },
 
@@ -29,14 +33,21 @@ const routes = [
   { path: '/admin/reset', name: 'reset', component: ResetView, meta: { requiresAuth: true } },
   { path: '/admin/tickets', name: 'tickets', component: TicketsView, meta: { requiresAuth: true } },
   { path: '/admin/tickets/:id', name: 'ticket-detail', component: TicketDetailView, meta: { requiresAuth: true } },
-  { path: '/admin/kanban-settings', name: 'kanban-settings', component: KanbanSettingsView, meta: { requiresAuth: true} },
+  { path: '/admin/kanban-settings', name: 'kanban-settings', component: KanbanSettingsView, meta: { requiresAuth: true } },
   
-  //Page frontOffice sans auth
-  { path: '/elements', name:'fo-elements', component:ElementListView},
-  { path: '/nouveau-ticket', name:'fo-create-ticket', component:CreateTicketView},
-  { path: '/tickets/:id', name:'fo-ticket-detail', component:FoTicketDetailView},
-  { path: '/kanban', name: 'fo-kanban', component: KanbanView}
-
+  // Route CostManagement - CORRIGÉE
+  {
+    path: '/backoffice/costs',
+    name: 'CostManagement',
+    component: CostManagement,  // Import direct au lieu de lazy loading
+    meta: { requiresAuth: true }
+  },
+  
+  // Pages FrontOffice sans auth
+  { path: '/elements', name: 'fo-elements', component: ElementListView },
+  { path: '/nouveau-ticket', name: 'fo-create-ticket', component: CreateTicketView },
+  { path: '/tickets/:id', name: 'fo-ticket-detail', component: FoTicketDetailView },
+  { path: '/kanban', name: 'fo-kanban', component: KanbanView }
 ]
 
 const router = createRouter({
@@ -45,7 +56,7 @@ const router = createRouter({
 })
 
 /**
- * Garde globale : protège les routes meta.requiresAuth (énoncé 1.a).
+ * Garde globale : protège les routes meta.requiresAuth
  */
 router.beforeEach((to) => {
   const auth = useAuthStore()

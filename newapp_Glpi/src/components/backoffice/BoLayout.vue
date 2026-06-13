@@ -6,11 +6,13 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const links = [
-  { name: 'dashboard', label: 'Tableau de bord', icon: '📊' },
-  { name: 'import', label: 'Importer', icon: '📥' },
-  { name: 'reset', label: 'Réinitialiser', icon: '🔄' },
-  { name: 'tickets', label: 'Tickets', icon: '🎫' },
-  { name: 'kanban-settings', label: 'Config Kanban', icon: '⚙️'}
+  { name: 'dashboard', label: 'Tableau de bord', icon: '📊', path: '/admin/dashboard' },
+  { name: 'import', label: 'Importer', icon: '📥', path: '/admin/import' },
+  { name: 'reset', label: 'Réinitialiser', icon: '🔄', path: '/admin/reset' },
+  { name: 'tickets', label: 'Tickets', icon: '🎫', path: '/admin/tickets' },
+  { name: 'kanban-settings', label: 'Config Kanban', icon: '⚙️', path: '/admin/kanban-settings' },
+  // NOUVEAU LIEN vers Gestion des coûts
+  { name: 'CostManagement', label: 'Gestion des coûts', icon: '💰', path: '/backoffice/costs' }
 ]
 
 async function handleLogout() {
@@ -27,7 +29,7 @@ async function handleLogout() {
         <router-link
           v-for="l in links"
           :key="l.name"
-          :to="{ name: l.name }"
+          :to="l.path"
           class="bo-link"
           active-class="active"
         >
@@ -49,7 +51,7 @@ async function handleLogout() {
   min-height: 100vh;
 }
 .bo-sidebar {
-  width: 240px;
+  width: 260px;
   background: #1e293b;
   color: #e2e8f0;
   display: flex;
@@ -97,14 +99,16 @@ async function handleLogout() {
   padding: 0.6rem;
   border-radius: 8px;
   cursor: pointer;
+  transition: all 0.2s;
 }
 .bo-logout:hover {
-  background: #b91c1c;
-  border-color: #b91c1c;
+  background: #dc2626;
+  border-color: #dc2626;
 }
 .bo-content {
   flex: 1;
   padding: 2rem;
   overflow: auto;
+  background: #f1f5f9;
 }
 </style>

@@ -87,6 +87,7 @@ onMounted(load)
         <option value="">Tous les types</option>
         <option value="Computer">Computer</option>
         <option value="Monitor">Monitor</option>
+        <option value="Phone">Phone</option>
       </select>
       <select v-model="filters.location">
         <option value="">Tous les lieux</option>

@@ -1,0 +1,24 @@
+1️⃣ CONFIG     ← EN PREMIER (dépendances, .env, droits GLPI)
+2️⃣ SERVICE    ← accès données/API
+3️⃣ STORE      ← orchestration/état partagé
+4️⃣ ROUTER     ← si nouvelle page
+5️⃣ VUE        ← EN DERNIER (l'écran)
+
+Règle : on descend poser les fondations, puis on remonte vers l'écran. Chaque couche est testée avant la suivante.
+
+L'exemple « Export CSV » résumé
+Étape	    ction
+1. Config	rien (JS pur)
+2. Service	créer export.js (✅ fait)
+3. Store	rien
+4. Router	rien
+5. Vue	dans ElementsListView : importer + bouton + méthode exportElements()
+
+import { exportToCsv, downloadBlob } from '@/services/export'
+
+function exportElements() {
+  const columns = ['name', 'type', 'location', 'manufacturer', 'status', 'user']
+  downloadBlob(exportToCsv(filtered.value, columns), 'elements.csv')
+}
+
+<button class="reset" @click="exportElements">⬇️ Exporter CSV</button>

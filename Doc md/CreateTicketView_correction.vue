@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import FoLayout from '@/views/frontoffice/FoLayout.vue'
 import { useGlpiStore } from '@/stores/glpi'
-import { createTicket, linkItemToTicket } from '@/services/glpiApi'
+import { createTicket, linkItemToTicket, getUsers, linkUserToTicket } from '@/services/glpiApi'
 
 const glpi = useGlpiStore()
 
@@ -10,8 +10,9 @@ const glpi = useGlpiStore()
 const form = ref({
   titre: '',
   description: '',
-  type: 1,       // 1 = Incident, 2 = Demande
-  priority: 3    // 3 = Moyenne
+  type: 1,        // 1 = Incident, 2 = Demande
+  priority: 3,    // 3 = Moyenne
+  technicianId: ''  // technicien assigné (vide = aucun)
 })
 
 // --- Éléments disponibles + sélection ---
@@ -19,23 +20,31 @@ const elements = ref([])          // { id, name, itemtype }
 const selected = ref(new Set())   // ids des éléments cochés (clé = itemtype-id)
 const search = ref('')
 
+// --- Techniciens disponibles ---
+const technicians = ref([])
+
 const loading = ref(true)
 const submitting = ref(false)
 const error = ref('')
 const success = ref(null)
 
-// Charger les éléments (Computers + Monitors)
-async function loadElements() {
+// Charger les éléments (Computers + Monitors) + les techniciens
+async function loadData() {
   loading.value = true
   error.value = ''
   try {
-    const { computers, monitors } = await glpi.fetchStats()
+    const t = await glpi.ensureToken()
+    const [{ computers, monitors }, users] = await Promise.all([
+      glpi.fetchStats(),
+      getUsers(t)
+    ])
     elements.value = [
       ...computers.map((c) => ({ id: c.id, name: c.name, itemtype: 'Computer' })),
       ...monitors.map((m) => ({ id: m.id, name: m.name, itemtype: 'Monitor' }))
     ]
+    technicians.value = users
   } catch (e) {
-    error.value = e.response?.data?.detail || e.message || 'Erreur de chargement des éléments'
+    error.value = e.response?.data?.detail || e.message || 'Erreur de chargement'
   } finally {
     loading.value = false
   }
@@ -64,6 +73,12 @@ function isSelected(el) {
 }
 
 const selectedCount = computed(() => selected.value.size)
+
+// Affiche un nom lisible pour un utilisateur GLPI
+function userLabel(u) {
+  const full = [u.realname, u.firstname].filter(Boolean).join(' ').trim()
+  return full || u.name || `Utilisateur #${u.id}`
+}
 
 async function submit() {
   error.value = ''
@@ -99,9 +114,18 @@ async function submit() {
       }
     }
 
-    success.value = { ticketId, links }
+    // 3) Assigner le technicien (type 2 = technicien) si choisi
+    let assigned = false
+    if (form.value.technicianId) {
+      try {
+        await linkUserToTicket(t, ticketId, Number(form.value.technicianId), 2)
+        assigned = true
+      } catch (e) { /* assignation non bloquante */ }
+    }
+
+    success.value = { ticketId, links, assigned }
     // réinitialiser le formulaire
-    form.value = { titre: '', description: '', type: 1, priority: 3 }
+    form.value = { titre: '', description: '', type: 1, priority: 3, technicianId: '' }
     selected.value = new Set()
   } catch (e) {
     error.value = e.response?.data?.detail || e.message || 'Erreur lors de la création.'
@@ -110,7 +134,7 @@ async function submit() {
   }
 }
 
-onMounted(loadElements)
+onMounted(loadData)
 </script>
 
 <template>
@@ -118,7 +142,7 @@ onMounted(loadElements)
     <h1>Créer un ticket</h1>
 
     <div v-if="success" class="success">
-      ✅ Ticket #{{ success.ticketId }} créé avec {{ success.links }} élément(s) associé(s).
+      ✅ Ticket #{{ success.ticketId }} créé avec {{ success.links }} élément(s) associé(s)<template v-if="success.assigned"> et un technicien assigné</template>.
     </div>
 
     <form class="form" @submit.prevent="submit">
@@ -153,6 +177,17 @@ onMounted(loadElements)
           </select>
         </label>
       </div>
+
+      <!-- Assignation d'un technicien -->
+      <label class="field">
+        <span>Technicien assigné</span>
+        <select v-model="form.technicianId">
+          <option value="">— Aucun —</option>
+          <option v-for="u in technicians" :key="u.id" :value="u.id">
+            {{ userLabel(u) }}
+          </option>
+        </select>
+      </label>
 
       <!-- Sélection multiple d'éléments -->
       <div class="field">

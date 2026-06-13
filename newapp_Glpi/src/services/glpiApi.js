@@ -393,3 +393,70 @@ function normalizeList(data, includeDeleted = false) {
   if (includeDeleted) return list
   return list.filter(item => item.is_deleted !== 1 && item.is_deleted !== true)
 }
+
+// Récupérer TOUS les TicketCosts depuis GLPI
+export async function getAllTicketCosts(token) {
+  const session = await getSessionToken()
+  const { data } = await legacy.get('/TicketCost',
+    {
+      headers: { 'Session-Token' : session},
+      params: { range: '0-9999' }
+    })
+  const list = Array.isArray(data) ? data : (data?.data || [])
+  return list.map((c) => ({
+    id: c.id,
+    ticketId: Number(c.tickets_id),
+    actiontime: Number(c.actiontime) || 0,
+    costTime: Number(c.cost_time) || 0,
+    costFixed: Number(c.cost_fixed) || 0,
+    costMaterial: Number(c.cost_material) || 0
+  }))
+}
+
+// Créer un TicketCost dans GLPI
+export async function createTicketCost(token, ticketId, costAmount) {
+  const session = await getSessionToken()
+  const { data } = await legacy.post('/TicketCost',
+    {
+      input: {
+        tickets_id: ticketId,
+        actiontime: 0,
+        cost_time: 0,
+        cost_fixed: Number(costAmount) || 0,
+        cost_material: 0,
+        entities_id: 0
+      }
+    },
+    { headers: { 'Session-Token': session } }
+  )
+  return data
+}
+
+//Lecture cout
+export async function getTicketCosts(token, ticketId) {
+  const session = await getSessionToken()
+  let list = []
+  try {
+    const { data } = await legacy.get(`/Ticket/${ticketId}/TicketCost`,
+      {
+        headers: { 'Session-Token' : session},
+        params: { range: '0-9999'}
+      })
+    list = Array.isArray(data) ? data : (data?.data || [])
+  } catch (_) {
+    const { data } = await legacy.get('/TicketCost',
+      {
+        headers: { 'Session-Token' : session},
+        params: { range: '0-9999', tickets_id: ticketId }
+      })
+    list = Array.isArray(data) ? data : (data?.data || [])
+  }
+
+  return list.map((c) => ({
+    id: c.id,
+    durationSecond: Number(c.actiontime) || 0,
+    timeCost: Number(c.cost_time) || 0,
+    fixedCost: Number(c.cost_fixed) || 0,
+    materialCost: Number(c.cost_material) || 0
+  }))
+}
