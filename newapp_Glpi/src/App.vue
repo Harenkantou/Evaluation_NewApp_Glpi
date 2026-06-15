@@ -7,6 +7,7 @@
       <nav class="top-nav">
         <router-link to="/elements">📋 Éléments</router-link>
         <router-link to="/nouveau-ticket">➕ Nouveau ticket</router-link>
+        <router-link to="/kanban"> Tableau Kanban </router-link>
         <div class="nav-separator"></div>
         <router-link to="/login">Connexion</router-link>
         <router-link to="/admin/dashboard">Tableau de bord</router-link>

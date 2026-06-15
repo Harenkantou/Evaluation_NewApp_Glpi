@@ -80,7 +80,6 @@ onMounted(load)
       <div class="cards">
         <StatCard label="Éléments" :value="elementCount" icon="🖥️" />
         <StatCard label="Tickets" :value="ticketCount" icon="🎫" />
-        <StatCard label="Coûts" :value="totalCost.toFixed(2) + ' €'" icon="💰" @click="goToCostManagement" clickable />
       </div>
 
       <div class="details">
@@ -103,25 +102,6 @@ onMounted(load)
             </tr>
           </table>
           <p v-else class="empty">Aucun ticket.</p>
-        </section>
-
-        <!-- NOUVEAU PANEL : Accès rapide -->
-        <section class="panel quick-access">
-          <h2>Accès rapide</h2>
-          <div class="quick-buttons">
-            <button class="quick-btn" @click="goToTickets">
-              <span class="btn-icon">🎫</span>
-              Voir les tickets
-            </button>
-            <button class="quick-btn" @click="goToCostManagement">
-              <span class="btn-icon">💰</span>
-              Gérer les coûts
-            </button>
-            <button class="quick-btn" @click="goToImport">
-              <span class="btn-icon">📥</span>
-              Importer des données
-            </button>
-          </div>
         </section>
       </div>
     </div>

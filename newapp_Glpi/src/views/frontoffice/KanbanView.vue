@@ -1,303 +1,305 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import draggable from 'vuedraggable'
 import FoLayout from '@/views/frontoffice/FoLayout.vue'
 import { useGlpiStore } from '@/stores/glpi'
 import {
-  getTickets, getTicket,
-  updateTicketStatus, addSolution, addFollowup, getUsers, linkUserToTicket
+  getTickets,
+  getTicket,
+  updateTicketStatus,
+  addSolution,
+  addFollowup,
+  getUsers,
+  linkUserToTicket
 } from '@/services/glpiApi'
 import { getSettings } from '@/services/sqliteService'
-import { saveCost } from '@/services/costService'
+import { saveCost, getAllCosts } from '@/services/costService'
 
 const glpi = useGlpiStore()
 const router = useRouter()
-
-// Les 3 statuts/colonnes (codes GLPI)
 const STATUSES = [1, 2, 6]
+const defaultLabels = { 1: 'Nouveau', 2: 'En cours', 6: 'Terminé' }
 
-// Données par colonne (tableaux LOCAUX mutables -> nécessaire pour le drag)
-const columns = ref({ 1: [], 2: [], 6: [] })
-
-// Réglages SQLite
+const columns = ref(Object.fromEntries(STATUSES.map(code => [code, []])))
 const settings = ref({})
-
 const loading = ref(true)
 const error = ref('')
-
-// --- Modale détails ---
 const detail = ref(null)
-
-// --- Modale solution (passage vers Clos) ---
 const showSolution = ref(false)
 const solutionText = ref('')
-let pendingClose = null
-
-// --- Modale attribution technicien (Nouveau -> In Progress) ---
+const costAmount = ref('')
+const pendingClose = ref(null)
 const showAssignModal = ref(false)
 const selectedTechId = ref('')
 const technicians = ref([])
-let pendingAssign = null
+const pendingAssign = ref(null)
+const showReopenChoice = ref(false)
+const reopenChoice = ref('')
+const pendingReopen = ref(null)
+const reopenTargetStatus = ref(1)
+const lastTicketCost = ref(null)
+const reopenPercentage = ref(10)
 
-// --- Modale réouverture (depuis Clos -> Nouveau ou In Progress) ---
-const showReopen = ref(false)
-const reopenReason = ref('')
-let pendingReopen = null
-let reopenTargetStatus = 1
-const costPercentReopen = ref(false)
+const resetError = () => { error.value = '' }
+const resetCloseModal = () => {
+  showSolution.value = false
+  solutionText.value = ''
+  costAmount.value = ''
+  pendingClose.value = null
+}
+const resetAssignModal = () => {
+  showAssignModal.value = false
+  selectedTechId.value = ''
+  pendingAssign.value = null
+}
+const resetReopenModal = () => {
+  showReopenChoice.value = false
+  reopenChoice.value = ''
+  reopenPercentage.value = 10
+  pendingReopen.value = null
+  lastTicketCost.value = null
+}
 
-// --- Modale coût (après clôture) ---
-const showCostDialog = ref(false)
-const costAmount = ref('')
-let pendingCost = null
+const buildColumns = () => Object.fromEntries(STATUSES.map(code => [code, []]))
+const mapSettings = list => list.reduce((acc, item) => {
+  const id = item.statusId ?? item.status_id
+  if (id != null) acc[id] = item
+  return acc
+}, {})
 
-//Modale Annulation
-const getLastCost = ref('')
-const deleteLastCost = ref(false)
-
-
-
-// ---------- Chargement ----------
-async function load() {
+const load = async () => {
   loading.value = true
-  error.value = ''
+  resetError()
   try {
-    const t = await glpi.ensureToken()
-    const [tickets, cfgList, usersList] = await Promise.all([
-      getTickets(t), 
-      getSettings(), 
-      getUsers(t)
+    const token = await glpi.ensureToken()
+    const [tickets, cfgList, users] = await Promise.all([
+      getTickets(token),
+      getSettings(),
+      getUsers(token)
     ])
 
-    const cfg = {}
-    for (const s of cfgList) {
-      const id = s.statusId ?? s.status_id
-      if (id != null) cfg[id] = s
-    }
-    settings.value = cfg
-    technicians.value = usersList
-
-
-    const cols = { 1: [], 2: [], 6: [] }
-    for (const tk of tickets) {
-      const st = Number(tk.status)
-      if (cols[st]) cols[st].push(tk)
-    }
-    columns.value = cols
-  } catch (e) {
-    error.value = e.response?.data?.detail || e.message || 'Erreur API GLPI'
+    settings.value = mapSettings(cfgList)
+    technicians.value = users
+    columns.value = buildColumns()
+    tickets.forEach(ticket => {
+      const status = Number(ticket.status)
+      if (columns.value[status]) columns.value[status].push(ticket)
+    })
+  } catch (err) {
+    error.value = err?.response?.data?.detail || err?.message || 'Erreur API GLPI'
   } finally {
     loading.value = false
   }
 }
 
-// helpers d'affichage
-function colColor(code) { 
-  return settings.value[code]?.color || '#f1f5f9' 
-}
-
-function colLabel(code) {
+const colColor = code => settings.value[code]?.color || '#f1f5f9'
+const colLabel = code => {
   const cfg = settings.value[code] || {}
-  const defaultLabels = { 1: 'Nouveau', 2: 'En cours', 6: 'Terminé' }
   return cfg.labelFr || cfg.label_fr || cfg.label_mg || cfg.labelMg || defaultLabels[code] || `Statut ${code}`
 }
 
-// ---------- Drag & drop ----------
-async function onChange(evt, targetStatus) {
+const changeStatus = async (ticket, status) => {
+  const token = await glpi.ensureToken()
+  await updateTicketStatus(token, ticket.id, status)
+  ticket.status = status
+}
+
+const onChange = async (evt, targetStatus) => {
   if (!evt.added) return
   const ticket = evt.added.element
   const oldStatus = Number(ticket.status)
 
-  // CAS 1 : RÉOUVERTURE -> on vient de Clos (6) vers Nouveau (1) ou In Progress (2)
   if (oldStatus === 6 && (targetStatus === 1 || targetStatus === 2)) {
-    pendingReopen = ticket
-    reopenTargetStatus = targetStatus
-    reopenReason.value = ''
-    showReopen.value = true
-    costPercentReopen.value = true
-    getLastCost.value = true
-    deleteLastCost.value = true 
+    pendingReopen.value = ticket
+    reopenTargetStatus.value = targetStatus
+    
+    // Récupérer le dernier VRAI SuperCost (pas de réouverture) du ticket
+    try {
+      const costs = await getAllCosts()
+      // Filtrer: uniquement les coûts de ce ticket et pas des coûts de réouverture
+      const ticketCosts = costs.filter(c => c.ticketId === ticket.id && !c.isReopening)
+      lastTicketCost.value = ticketCosts.length > 0 ? ticketCosts[ticketCosts.length - 1] : null
+    } catch {
+      lastTicketCost.value = null
+    }
+    
+    showReopenChoice.value = true
     return
   }
 
-  // CAS 2 : Nouveau -> In Progress (1 -> 2) -> attribuer un technicien
   if (oldStatus === 1 && targetStatus === 2) {
-    pendingAssign = ticket
-    selectedTechId.value = ''
+    pendingAssign.value = ticket
     showAssignModal.value = true
     return
   }
 
-  // CAS 3 : passage vers Clos -> boîte de dialogue solution
   if (targetStatus === 6) {
-    pendingClose = ticket
-    solutionText.value = ''
+    pendingClose.value = ticket
     showSolution.value = true
     return
   }
 
-  // CAS 4 : changement direct
   try {
-    const t = await glpi.ensureToken()
-    await updateTicketStatus(t, ticket.id, targetStatus)
-    ticket.status = targetStatus
-  } catch (e) {
-    error.value = 'Changement de statut échoué : ' + (e.message || '')
+    await changeStatus(ticket, targetStatus)
+  } catch (err) {
+    error.value = 'Changement de statut échoué : ' + (err?.message || '')
     await load()
   }
 }
 
-// ---------- Réouverture ----------
-async function confirmReopen() {
-  if (!pendingReopen) return
-  if (!reopenReason.value.trim()) {
-    error.value = 'Veuillez saisir un motif de réouverture.'
-    return
-  }
-  try {
-    const t = await glpi.ensureToken()
-    await addFollowup(t, pendingReopen.id, 'Réouverture : ' + reopenReason.value.trim())
-    await updateTicketStatus(t, pendingReopen.id, reopenTargetStatus)
-    pendingReopen.status = reopenTargetStatus
-  } catch (e) {
-    error.value = 'Réouverture échouée : ' + (e.message || '')
-  } finally {
-    showReopen.value = false
-    pendingReopen = null
-    costPercentReopen = false
-    getLastCost = false
-    deleteLastCost = false 
-    await load()
-  }
-}
-
-async function cancelReopen() {
-  showReopen.value = false
-  pendingReopen = null
-  await load()
-}
-
-// ---------- Clôture ----------
-async function confirmClose() {
-  if (!pendingClose) return
-  try {
-    const t = await glpi.ensureToken()
-    if (solutionText.value.trim()) {
-      await addSolution(t, pendingClose.id, solutionText.value.trim())
-    }
-    await updateTicketStatus(t, pendingClose.id, 6)
-    pendingClose.status = 6
-    
-    // Fermer la modale solution
-    showSolution.value = false
-    
-    // Ouvrir la modale de coût
-    pendingCost = pendingClose
-    costAmount.value = ''
-    showCostDialog.value = true
-    
-  } catch (e) {
-    error.value = 'Clôture échouée : ' + (e.message || '')
-    showSolution.value = false
-    pendingClose = null
-    await load()
-  }
-
-}
-
-async function cancelClose() {
-  showSolution.value = false
-  pendingClose = null
-  await load()
-}
-
-// ---------- Sauvegarde du coût ----------
-async function confirmCost() {
-  if (!pendingCost) return
-  
-  // Validation du montant
+const confirmClose = async () => {
+  if (!pendingClose.value) return
   const amount = parseFloat(costAmount.value)
-  if (isNaN(amount) || amount <= 0) {
-    alert('❌ Veuillez saisir un montant valide (supérieur à 0)')
+  if (!(amount > 0)) {
+    error.value = 'Veuillez saisir un montant valide supérieur à 0.'
     return
   }
-  
+
   try {
-    // Sauvegarder le coût dans SQLite via costService
-    const result = await saveCost({
-      ticketId: pendingCost.id,
-      ticketName: pendingCost.name || `Ticket #${pendingCost.id}`,
+    const token = await glpi.ensureToken()
+    if (solutionText.value.trim()) {
+      await addSolution(token, pendingClose.value.id, solutionText.value.trim())
+    }
+    await updateTicketStatus(token, pendingClose.value.id, 6)
+    await saveCost({
+      ticketId: pendingClose.value.id,
+      ticketName: pendingClose.value.name || `Ticket #${pendingClose.value.id}`,
       cost: amount
     })
-    
-    console.log('✅ Coût sauvegardé:', result)
-    alert(`✅ Coût de ${amount.toFixed(2)}€ enregistré pour le ticket #${pendingCost.id}`)
-    
-  } catch (e) {
-    console.error('❌ Erreur sauvegarde:', e)
-    alert('❌ Erreur lors de la sauvegarde du coût: ' + (e.response?.data?.message || e.message || 'Erreur inconnue'))
+    pendingClose.value.status = 6
+  } catch (err) {
+    error.value = 'Clôture échouée : ' + (err?.message || '')
   } finally {
-    // Fermer la modale et nettoyer
-    showCostDialog.value = false
-    pendingCost = null
-    costAmount.value = ''
+    resetCloseModal()
     await load()
   }
 }
 
-async function deleteCost () {
-  
-}
-async function cancelCost() {
-  showCostDialog.value = false
-  pendingCost = null
-  costAmount.value = ''
-  await load()
+const cancelClose = () => {
+  resetCloseModal()
+  load()
 }
 
-// ---------- Attribution technicien ----------
-async function confirmAssign() {
-  if (!pendingAssign || !selectedTechId.value) {
+const confirmCancel = async () => {
+  if (!pendingReopen.value || !lastTicketCost.value) {
+    error.value = 'Aucun coût à annuler'
+    return
+  }
+
+  // 🔍 Vérification de sécurité de l'ID
+  if (!lastTicketCost.value.id) {
+    error.value = 'Erreur : ID du coût manquant ou invalide'
+    console.warn('🐛 lastTicketCost invalide:', lastTicketCost.value)
+    return
+  }
+
+  try {
+    console.log('🗑️ Suppression coût ID:', lastTicketCost.value.id)
+    
+    const response = await fetch(`/api/ticket-costs/${lastTicketCost.value.id}`, {
+      method: 'DELETE'
+    })
+    
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      throw new Error(`Erreur suppression (${response.status}) : ${errText || 'Ressource introuvable'}`)
+    }
+    
+    // ✅ Si suppression OK, on change le statut
+    await changeStatus(pendingReopen.value, reopenTargetStatus.value)
+  } catch (err) {
+    error.value = 'Annulation échouée : ' + (err?.message || '')
+    console.error('❌ Erreur annulation:', err)
+  } finally {
+    resetReopenModal()
+    await load()
+  }
+}
+
+const confirmReopenWithPercent = async () => {
+  // Réouverture : calculer le coût (% du dernier) et basculer à In Progress
+  if (!pendingReopen.value || !lastTicketCost.value) {
+    error.value = 'Impossible de calculer le coût de réouverture'
+    return
+  }
+
+  const percent = Number(reopenPercentage.value) || 0
+  if (percent <= 0 || percent > 100) {
+    error.value = 'Veuillez entrer un pourcentage entre 0 et 100'
+    return
+  }
+
+  try {
+    const token = await glpi.ensureToken()
+    // Calculer le nouveau coût
+    const newCost = (lastTicketCost.value.cost * percent) / 100
+    
+    // Enregistrer le coût de réouverture dans SQLite
+    await saveCost({
+      ticketId: pendingReopen.value.id,
+      ticketName: pendingReopen.value.name || `Ticket #${pendingReopen.value.id}`,
+      cost: newCost,
+      isReopening: true
+    })
+    
+    // Ajouter un follow-up pour tracer l'action
+    await addFollowup(
+      token,
+      pendingReopen.value.id,
+      `Réouverture : ${percent}% du dernier coût (${newCost.toFixed(2)} €)`
+    )
+    
+    // Changer le statut à In Progress
+    await changeStatus(pendingReopen.value, reopenTargetStatus.value)
+  } catch (err) {
+    error.value = 'Réouverture échouée : ' + (err?.message || '')
+  } finally {
+    resetReopenModal()
+    await load()
+  }
+}
+
+const cancelReopenChoice = () => {
+  resetReopenModal()
+  load()
+}
+
+const confirmAssign = async () => {
+  if (!pendingAssign.value || !selectedTechId.value) {
     error.value = 'Veuillez sélectionner un technicien'
     return
   }
+
   try {
-    const t = await glpi.ensureToken()
-    await linkUserToTicket(t, pendingAssign.id, selectedTechId.value, 2)
-    await updateTicketStatus(t, pendingAssign.id, 2)
-    pendingAssign.status = 2
-  } catch (e) {
-    error.value = 'Attribution échouée : ' + (e.message || '')
+    const token = await glpi.ensureToken()
+    await linkUserToTicket(token, pendingAssign.value.id, selectedTechId.value, 2)
+    await changeStatus(pendingAssign.value, 2)
+  } catch (err) {
+    error.value = 'Attribution échouée : ' + (err?.message || '')
   } finally {
-    showAssignModal.value = false
-    pendingAssign = null
-    selectedTechId.value = ''
+    resetAssignModal()
     await load()
   }
 }
 
-async function cancelAssign() {
-  showAssignModal.value = false
-  pendingAssign = null
-  selectedTechId.value = ''
-  await load()
+const cancelAssign = () => {
+  resetAssignModal()
+  load()
 }
 
-// ---------- Ajouter un ticket ----------
-function goToCreateTicket() {
-  router.push({ name: 'fo-create-ticket' })
-}
+const goToCreateTicket = () => router.push({ name: 'fo-create-ticket' })
 
-// ---------- Détails ----------
-async function openDetail(ticket) {
+const openDetail = async ticket => {
   try {
-    const t = await glpi.ensureToken()
-    detail.value = await getTicket(t, ticket.id)
-  } catch (e) {
+    const token = await glpi.ensureToken()
+    detail.value = await getTicket(token, ticket.id)
+  } catch {
     detail.value = ticket
   }
 }
+
+const fmt = value => Number(value || 0).toFixed(2)
 
 onMounted(load)
 </script>
@@ -337,7 +339,13 @@ onMounted(load)
           </template>
         </draggable>
 
-        <button class="add-ticket-btn-col" @click="goToCreateTicket">+ Ajouter</button>
+        <button
+          v-if="code === 1"
+          class="add-ticket-btn-col"
+          @click="goToCreateTicket"
+        >
+          + Ajouter
+        </button>
       </div>
     </div>
 
@@ -355,52 +363,44 @@ onMounted(load)
       </div>
     </div>
 
-    <!-- Modale : solution avant clôture -->
+    <!-- Modale : clôture (solution + coût) -->
     <div v-if="showSolution" class="overlay" @click.self="cancelClose">
       <div class="modal">
         <h2>🔒 Clôturer le ticket</h2>
-        <p class="hint">Veuillez saisir la solution apportée avant de clore.</p>
-        <textarea v-model="solutionText" rows="4" placeholder="Solution..."></textarea>
+        <p class="ticket-ref">
+          <strong>Ticket :</strong> {{ pendingClose?.name || `#${pendingClose?.id}` }}
+        </p>
+
+        <!-- Solution (facultatif) -->
+        <div class="form-group">
+          <label>Solution <span class="optional">(facultatif)</span></label>
+          <textarea v-model="solutionText" rows="3" placeholder="Décrivez la solution..."></textarea>
+        </div>
+
+        <!-- Coût (obligatoire) -->
+        <div class="form-group">
+          <label>💰 Coût à enregistrer <span class="required">*</span></label>
+          <div class="input-with-unit">
+            <input
+              v-model="costAmount"
+              type="number"
+              min="0.01"
+              step="0.01"
+              placeholder="0.00"
+            />
+            <span class="unit">€</span>
+          </div>
+          <p class="hint">Ce montant sera enregistré dans SQLite.</p>
+        </div>
+
         <div class="modal-actions">
           <button class="ghost" @click="cancelClose">Annuler</button>
-          <button class="primary" @click="confirmClose">Valider la clôture</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Modale : saisir le coût APRÈS clôture -->
-    <div v-if="showCostDialog" class="overlay" @click.self="cancelCost">
-      <div class="modal cost-modal">
-        <div class="modal-header">
-          <span class="modal-icon">💰</span>
-          <h2>Saisir le coût</h2>
-        </div>
-        
-        <div class="ticket-info">
-          <span class="label">Ticket :</span>
-          <strong>{{ pendingCost?.name || `#${pendingCost?.id}` }}</strong>
-        </div>
-        
-        <div class="form-group">
-          <label>Montant (€)</label>
-          <input 
-            v-model="costAmount" 
-            type="number" 
-            step="0.01"
-            min="0"
-            placeholder="0.00"
-            class="cost-input"
-            autofocus
-            @keyup.enter="confirmCost"
-          />
-        </div>
-        
-        <p class="hint">💡 Saisissez le coût total associé à ce ticket (main d'œuvre, pièces, etc.)</p>
-        
-        <div class="modal-actions">
-          <button class="ghost" @click="cancelCost">Annuler</button>
-          <button class="primary" @click="confirmCost" :disabled="!costAmount || parseFloat(costAmount) <= 0">
-            Valider ({{ costAmount || 0 }} €)
+          <button
+            class="primary"
+            :disabled="!costAmount || parseFloat(costAmount) <= 0"
+            @click="confirmClose"
+          >
+            Valider la clôture
           </button>
         </div>
       </div>
@@ -411,7 +411,7 @@ onMounted(load)
       <div class="modal">
         <h2>👨‍💻 Assigner un technicien</h2>
         <p><strong>Ticket :</strong> {{ pendingAssign?.name }}</p>
-        
+
         <label>Sélectionner un technicien</label>
         <select v-model="selectedTechId" class="tech-select">
           <option value="">-- Sélectionner --</option>
@@ -419,7 +419,7 @@ onMounted(load)
             {{ tech.name }} {{ tech.realname ? `(${tech.realname})` : '' }}
           </option>
         </select>
-        
+
         <div class="modal-actions">
           <button class="ghost" @click="cancelAssign">Annuler</button>
           <button class="primary" @click="confirmAssign" :disabled="!selectedTechId">Assigner</button>
@@ -427,18 +427,107 @@ onMounted(load)
       </div>
     </div>
 
-    <!-- Modale : réouverture -->
-    <div v-if="showReopen" class="overlay" @click.self="cancelReopen">
+    <!-- Modale 1 : Choix Annulation vs Réouverture -->
+    <div v-if="showReopenChoice && reopenChoice === ''" class="overlay" @click.self="cancelReopenChoice">
       <div class="modal">
-        <h2>🔄 Réouvrir le ticket</h2>
-        <p><strong>Ticket :</strong> {{ pendingReopen?.name }}</p>
-        
-        <label>Motif de réouverture</label>
-        <textarea v-model="reopenReason" rows="4" placeholder="Motif..."></textarea>
-        
+        <h2>🔄 Choisir une action</h2>
+        <p class="ticket-ref">
+          <strong>Ticket :</strong> {{ pendingReopen?.name }}
+        </p>
+        <p v-if="lastTicketCost" class="ticket-ref">
+          Dernier coût enregistré : <strong>{{ fmt(lastTicketCost.cost) }} €</strong>
+        </p>
+
         <div class="modal-actions">
-          <button class="ghost" @click="cancelReopen">Annuler</button>
-          <button class="primary" @click="confirmReopen" :disabled="!reopenReason.trim()">Réouvrir</button>
+          <button class="ghost" @click="cancelReopenChoice">Fermer</button>
+          <button class="primary" @click="reopenChoice = 'cancel'" v-if="lastTicketCost">
+            ❌ Annulation
+          </button>
+          <button class="primary" @click="reopenChoice = 'reopen'" v-if="lastTicketCost">
+            🔄 Réouverture (%)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale 2 : Annulation (supprimer le coût) -->
+    <div v-if="showReopenChoice && reopenChoice === 'cancel'" class="overlay" @click.self="cancelReopenChoice">
+      <div class="modal">
+        <h2>❌ Annuler le coût</h2>
+        <p class="ticket-ref">
+          <strong>Ticket :</strong> {{ pendingReopen?.name }}
+        </p>
+        
+        <div class="form-group">
+          <label>Coût à supprimer</label>
+          <p style="font-size: 1.3rem; font-weight: bold; color: #dc2626;">
+            {{ fmt(lastTicketCost?.cost) }} €
+          </p>
+        </div>
+
+        <p class="hint">
+          ⚠️ Cette action supprimera le dernier coût enregistré et basculera le ticket en "En cours".
+        </p>
+
+        <div class="modal-actions">
+          <button class="ghost" @click="reopenChoice = ''">← Retour</button>
+          <button class="primary" @click="confirmCancel" style="background: #dc2626;">
+            Confirmer la suppression
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale 3 : Réouverture avec pourcentage -->
+    <div v-if="showReopenChoice && reopenChoice === 'reopen'" class="overlay" @click.self="cancelReopenChoice">
+      <div class="modal">
+        <h2>🔄 Réouverture avec %</h2>
+        <p class="ticket-ref">
+          <strong>Ticket :</strong> {{ pendingReopen?.name }}
+        </p>
+
+        <div class="form-group">
+          <label>Dernier coût</label>
+          <p style="font-size: 1.1rem; font-weight: bold;">
+            {{ fmt(lastTicketCost?.cost) }} €
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label>Pourcentage de réouverture <span class="required">*</span></label>
+          <div class="input-with-unit">
+            <input
+              v-model.number="reopenPercentage"
+              type="number"
+              min="0"
+              max="100"
+              placeholder="10"
+              @input="reopenPercentage = Math.max(0, Math.min(100, reopenPercentage))"
+            />
+            <span class="unit">%</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Coût calculé pour la réouverture</label>
+          <p style="font-size: 1.2rem; font-weight: bold; color: #0f766e;">
+            {{ fmt((lastTicketCost?.cost * reopenPercentage) / 100) }} €
+          </p>
+        </div>
+
+        <p class="hint">
+          📝 Ce montant sera enregistré comme nouveau coût et le ticket basculera en "En cours".
+        </p>
+
+        <div class="modal-actions">
+          <button class="ghost" @click="reopenChoice = ''">← Retour</button>
+          <button 
+            class="primary" 
+            @click="confirmReopenWithPercent"
+            :disabled="!reopenPercentage || reopenPercentage <= 0"
+          >
+            Valider la réouverture
+          </button>
         </div>
       </div>
     </div>
@@ -467,10 +556,7 @@ h1 { margin: 0; }
   font-size: 0.9rem;
   transition: background 0.2s;
 }
-
-.add-btn:hover {
-  background: #0d5c56;
-}
+.add-btn:hover { background: #0d5c56; }
 
 .info { color: #94a3b8; text-align: center; padding: 2rem; }
 
@@ -546,16 +632,11 @@ h1 { margin: 0; }
   gap: 0.2rem;
   transition: all 0.2s;
 }
-
 .card:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 8px rgba(0,0,0,0.15);
 }
-
-.card small {
-  color: #94a3b8;
-  font-size: 0.7rem;
-}
+.card small { color: #94a3b8; font-size: 0.7rem; }
 
 .add-ticket-btn-col {
   width: 100%;
@@ -570,11 +651,7 @@ h1 { margin: 0; }
   font-size: 0.9rem;
   transition: all 0.15s;
 }
-
-.add-ticket-btn-col:hover {
-  background: white;
-  border-color: #94a3b8;
-}
+.add-ticket-btn-col:hover { background: white; border-color: #94a3b8; }
 
 /* Modales */
 .overlay {
@@ -595,79 +672,65 @@ h1 { margin: 0; }
   max-width: 90vw;
   box-shadow: 0 20px 40px rgba(0,0,0,0.2);
 }
+.modal h2 { margin: 0 0 1rem 0; }
 
-.cost-modal {
-  width: 400px;
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-.modal-icon {
-  font-size: 1.5rem;
-}
-
-.modal h2 {
-  margin: 0;
-}
-
-.ticket-info {
+.ticket-ref {
   background: #f8fafc;
-  padding: 0.75rem;
-  border-radius: 8px;
+  border-left: 3px solid #3b82f6;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
   margin-bottom: 1rem;
-  display: flex;
-  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: #475569;
 }
 
-.ticket-info .label {
-  color: #64748b;
-}
-
-.form-group {
-  margin-bottom: 1rem;
-}
-
+.form-group { margin-bottom: 1rem; }
 .form-group label {
   display: block;
   font-weight: 600;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.4rem;
   color: #1e293b;
 }
 
-.modal input, .modal textarea, .modal select {
+.modal input,
+.modal textarea,
+.modal select {
   width: 100%;
   padding: 0.6rem;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   font-size: 0.95rem;
+  box-sizing: border-box;
 }
 
-.cost-input {
+/* Champ coût avec unité € */
+.input-with-unit {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.input-with-unit input {
+  flex: 1;
+  text-align: right;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.unit {
   font-size: 1.2rem;
-  text-align: center;
+  font-weight: 700;
+  color: #0f766e;
 }
 
-.hint {
-  color: #64748b;
-  font-size: 0.8rem;
-  margin-top: 0.5rem;
-}
+.optional { color: #94a3b8; font-weight: 400; font-size: 0.8rem; }
+.required { color: #dc2626; }
+.hint { color: #64748b; font-size: 0.78rem; margin-top: 0.4rem; }
 
 .row {
   display: flex;
   padding: 0.4rem 0;
   border-bottom: 1px solid #f1f5f9;
 }
-
-.row span {
-  width: 100px;
-  color: #64748b;
-}
+.row span { width: 100px; color: #64748b; }
 
 .modal-actions {
   display: flex;
@@ -684,10 +747,7 @@ h1 { margin: 0; }
   cursor: pointer;
   transition: background 0.2s;
 }
-
-.ghost:hover {
-  background: #cbd5e1;
-}
+.ghost:hover { background: #cbd5e1; }
 
 .primary {
   background: #2563eb;
@@ -698,28 +758,13 @@ h1 { margin: 0; }
   cursor: pointer;
   transition: background 0.2s;
 }
+.primary:hover:not(:disabled) { background: #1d4ed8; }
+.primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.primary:hover:not(:disabled) {
-  background: #1d4ed8;
-}
-
-.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.tech-select {
-  width: 100%;
-  margin-top: 0.5rem;
-}
+.tech-select { width: 100%; margin-top: 0.5rem; }
 
 @media (max-width: 768px) {
-  .board {
-    flex-direction: column;
-  }
-  
-  .modal {
-    width: 95vw;
-  }
+  .board { flex-direction: column; }
+  .modal { width: 95vw; }
 }
 </style>

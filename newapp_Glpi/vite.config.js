@@ -1,8 +1,4 @@
-// ====== À AJOUTER dans votre vite.config.js, dans server.proxy ======
-//
-// Vous avez déjà le proxy /glpi-api (API v2). Ajoutez /glpi-legacy (API v1)
-// juste à côté. Exemple complet :
-
+// vite.config.js
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
@@ -14,17 +10,21 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // API v2 (High-Level) : création, lecture, OAuth2
       '/glpi-api': {
         target: 'http://glpi.local',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/glpi-api/, '/api.php')
       },
-      // API v1 (Legacy) : UNIQUEMENT pour la purge (force_purge fiable)
       '/glpi-legacy': {
         target: 'http://glpi.local',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/glpi-legacy/, '/apirest.php')
+      },
+      // 👇 AJOUT CRITIQUE : Proxy pour votre API Spring Boot
+      '/api': {
+        target: 'http://localhost:8080', // Adaptez si votre Spring Boot tourne sur un autre port
+        changeOrigin: true,
+        secure: false
       }
     }
   }

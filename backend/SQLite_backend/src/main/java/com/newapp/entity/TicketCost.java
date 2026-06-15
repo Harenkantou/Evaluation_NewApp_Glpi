@@ -23,4 +23,7 @@ public class TicketCost {
     
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+    
+    @Column(name = "is_reopening")
+    private Boolean isReopening = false;
 }

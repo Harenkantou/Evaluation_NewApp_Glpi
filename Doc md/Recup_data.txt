@@ -1,0 +1,188 @@
+# 📡 Récupération des données SQLite & GLPI dans `KanbanView.vue`
+
+Ce document explique **uniquement à partir du code que vous avez fourni** comment la page Kanban récupère les données depuis :
+
+- 🟢 **GLPI** (tickets, utilisateurs, statuts)
+- 🟣 **SQLite via Spring Boot** (coûts des tickets — `ticket_costs`)
+- 🟡 **SQLite via le service `sqliteService`** (paramètres des colonnes Kanban — couleur/label)
+
+Le but est de comprendre **le flux complet** entre frontend Vue et les sources de données.
+
+---
+
+## 1) 🌍 Vue d’ensemble du flux
+┌─────────────────────────┐
+│ KanbanView.vue │ (Frontend Vue 3)
+└───────────┬─────────────┘
+│
+┌────────┴─────────┬────────────────────┐
+│ │ │
+▼ ▼ ▼
+glpiApi.js costService.js sqliteService.js
+│ │ │
+▼ ▼ ▼
+GLPI (HTTP) Spring Boot REST Backend SQLite
+(via proxy /api/ticket-costs (settings colonnes)
+Vite) (entité TicketCost)
+
+
+3 sources de données, **chacune ayant son propre service**.
+
+---
+
+## 2) 🔑 Étape 0 — Authentification GLPI
+
+Avant toute requête GLPI, on récupère un **token** via le store :
+
+```js
+import { useGlpiStore } from '@/stores/glpi'
+const glpi = useGlpiStore()
+
+const token = await glpi.ensureToken()
+
+ensureToken() garantit que le token est valide (sinon il se reconnecte).
+Ce token est passé en argument à toutes les fonctions GLPI.
+💡 Aucun token n’est nécessaire pour SQLite (le backend Spring Boot gère seul).
+
+3) 🟢 Récupération des données GLPI
+
+3.1) Imports utilisés
+import {
+  getTickets,
+  getTicket,
+  updateTicketStatus,
+  addSolution,
+  addFollowup,
+  getUsers,
+  linkUserToTicket
+} from '@/services/glpiApi'
+
+getTickets(token) → liste des tickets
+getTicket(token, id) → détails d’un ticket
+getUsers(token) → liste des techniciens
+updateTicketStatus, addSolution, addFollowup, linkUserToTicket → actions
+
+3.2) Appel dans load()
+const load = async () => {
+  loading.value = true
+  resetError()
+  try {
+    const token = await glpi.ensureToken()
+    const [tickets, cfgList, users] = await Promise.all([
+      getTickets(token),       // 🟢 GLPI : tickets
+      getSettings(),           // 🟡 SQLite : settings colonnes
+      getUsers(token)          // 🟢 GLPI : utilisateurs
+    ])
+
+    settings.value = mapSettings(cfgList)
+    technicians.value = users
+    columns.value = buildColumns()
+    tickets.forEach(ticket => {
+      const status = Number(ticket.status)
+      if (columns.value[status]) columns.value[status].push(ticket)
+    })
+  } catch (err) {
+    error.value = err?.response?.data?.detail || err?.message || 'Erreur API GLPI'
+  } finally {
+    loading.value = false
+  }
+}
+
+3.3) Ce qui se passe étape par étape
+ensureToken() → récupère un token GLPI.
+Promise.all([...]) → 3 appels en parallèle :
+GLPI : tickets
+SQLite : settings colonnes
+GLPI : utilisateurs
+Les tickets sont distribués dans columns selon leur status :
+tickets.forEach(ticket => {
+  const status = Number(ticket.status)
+  if (columns.value[status]) columns.value[status].push(ticket)
+})
+
+settings.value et technicians.value sont stockés.
+
+3.4) Affichage dans le template
+Une fois columns rempli :
+
+<div v-for="code in STATUSES" :key="code" class="column">
+  <draggable :list="columns[code]" ...>
+    <template #item="{ element }">
+      <div class="card">
+        <strong>{{ element.name }}</strong>
+        <small>#{{ element.id }}</small>
+      </div>
+    </template>
+  </draggable>
+</div>
+Les tickets GLPI s’affichent automatiquement dans la bonne colonne.
+
+3.5) Détails d’un ticket — openDetail()
+const openDetail = async ticket => {
+  try {
+    const token = await glpi.ensureToken()
+    detail.value = await getTicket(token, ticket.id)  // 🟢 GLPI
+  } catch {
+    detail.value = ticket
+  }
+}
+
+Appelle GLPI pour les détails complets.
+Si erreur, on retombe sur les données déjà chargées.
+
+Affichage:
+<div v-if="detail" class="overlay">
+  <div class="modal">
+    <h2>Ticket #{{ detail.id }}</h2>
+    <div class="row"><span>Titre</span><b>{{ detail.name }}</b></div>
+    <div class="row"><span>Description</span><b v-html="detail.content"></b></div>
+    ...
+  </div>
+</div>
+
+4) 🟡 Récupération SQLite — Settings des colonnes
+4- Import 
+import { getSettings } from '@/services/sqliteService'
+
+4.2) Appel dans load()
+const cfgList = await getSettings()
+settings.value = mapSettings(cfgList)
+
+4.3) Transformation:
+const mapSettings = list => list.reduce((acc, item) => {
+  const id = item.statusId ?? item.status_id
+  if (id != null) acc[id] = item
+  return acc
+}, {})
+
+👉 Convertit la liste en dictionnaire :
+
+// Avant
+[ { statusId: 1, color: '#fef9c3', labelFr: 'Nouveau' },
+  { statusId: 2, color: '#dbeafe', labelFr: 'En cours' } ]
+
+// Après
+{
+  1: { statusId: 1, color: '#fef9c3', labelFr: 'Nouveau' },
+  2: { statusId: 2, color: '#dbeafe', labelFr: 'En cours' }
+}
+
+4.4) Style des colonnes:
+const colColor = code => settings.value[code]?.color || '#f1f5f9'
+
+const colLabel = code => {
+  const cfg = settings.value[code] || {}
+  return cfg.labelFr || cfg.label_fr || cfg.label_mg || cfg.labelMg
+      || defaultLabels[code] || `Statut ${code}`
+}
+Template:
+<div class="column" :style="{ background: colColor(code) }">
+  <div class="col-head">
+    <span>{{ colLabel(code) }}</span>
+    <span class="count">{{ columns[code].length }}</span>
+  </div>
+  ...
+</div>
+
+Chaque colonne récupère sa couleur et son label depuis SQLite.
+Si données absentes → fallback (defaultLabels, gris clair).
