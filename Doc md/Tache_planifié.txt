@@ -1,0 +1,77 @@
+// cronJobs.js
+import cron from 'node-cron'
+import { closeTicket } from '@/services/ticketService'
+import { getInactiveTickets } from '@/services/glpiApi'
+
+// Tous les jours à 2h du matin
+cron.schedule('0 2 * * *', async () => {
+  const inactiveTickets = await getInactiveTickets(30) // 30 jours
+  
+  for (const ticket of inactiveTickets) {
+    await closeTicket({
+      ticketId: ticket.id,
+      ticketName: ticket.name,
+      amount: 0 // clôture sans coût
+    })
+    console.log(`🤖 Auto-clôture: Ticket #${ticket.id}`)
+  }
+})
+
+export async function reopenTicket({ ticketId, ticketName, percent, mode = 1, batchId }) {
+  const costs = await getCostsByTicket(ticketId)
+
+  // ✅ Garder uniquement les closings (SuperCost)
+  const closings = costs
+    .filter(c => c.costType === 'closing')
+    .sort((a, b) => (a.id || 0) - (b.id || 0))
+
+  if (!closings.length) {
+    throw new Error(`Aucun closing trouvé pour le ticket ${ticketId}`)
+  }
+
+  // ✅ Calcul de la base selon le MODE
+  let lastBase = 0
+  const values = closings.map(c => toAmount(c.costValue))
+
+  switch (Number(mode)) {
+    case 1: // Mode 1 = Dernier coût (par batchId)
+      const lastBatchId = closings[closings.length - 1].batchId
+      lastBase = lastBatchId
+        ? closings.filter(c => c.batchId === lastBatchId).reduce((s, c) => s + toAmount(c.costValue), 0)
+        : toAmount(closings[closings.length - 1].costValue)
+      break
+
+    case 2: // Mode 2 = Premier coût (par batchId)
+      const firstBatchId = closings[0].batchId
+      lastBase = firstBatchId
+        ? closings.filter(c => c.batchId === firstBatchId).reduce((s, c) => s + toAmount(c.costValue), 0)
+        : toAmount(closings[0].costValue)
+      break
+
+    case 3: // Mode 3 = Moyenne
+      lastBase = values.reduce((s, v) => s + v, 0) / values.length
+      break
+
+    case 4: // Mode 4 = Somme
+      lastBase = values.reduce((s, v) => s + v, 0)
+      break
+
+    default:
+      throw new Error(`Mode inconnu : ${mode}`)
+  }
+
+  console.log(`🔍 Ticket ${ticketId} : mode ${mode} → base = ${lastBase}€`)
+
+  const cost = (lastBase * Number(percent || 0)) / 100
+
+  const created = await saveCostsForItems({
+    ticketId,
+    ticketName,
+    costType: 'reopening',
+    costValue: cost,
+    source: batchId ? 'csv' : 'manual',
+    batchId
+  })
+
+  return { cost, baseCost: lastBase, mode, created }
+}

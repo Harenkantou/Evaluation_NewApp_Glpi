@@ -8,6 +8,7 @@ const auth = useAuthStore()
 const links = [
   { name: 'dashboard', label: 'Tableau de bord', icon: '📊', path: '/admin/dashboard' },
   { name: 'import', label: 'Importer', icon: '📥', path: '/admin/import' },
+  { name: 'import-ticket-csv', label: 'Import mouvement', icon: '🧾', path: '/admin/import-ticket-csv' },
   { name: 'reset', label: 'Réinitialiser', icon: '🔄', path: '/admin/reset' },
   { name: 'tickets', label: 'Tickets', icon: '🎫', path: '/admin/tickets' },
   { name: 'kanban-settings', label: 'Config Kanban', icon: '⚙️', path: '/admin/kanban-settings' },

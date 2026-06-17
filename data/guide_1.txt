@@ -1,0 +1,153 @@
+🟢 Fonction 1 : reopenTicket()
+export async function reopenTicket({ ticketId, ticketName, percent, batchId }) {
+  // 1. Récupère les closings du ticket
+  // 2. Calcule le coût : lastBase × percent / 100
+  // 3. Éclate le coût sur les items GLPI
+  // 4. Sauvegarde avec un batchId commun
+}
+
+🎯 Utilisation N°1 : Dans le Kanban (drag & drop)
+
+// Importation
+import { reopenTicket } from '@/services/ticketService'
+
+// Appel dans la modale de réouverture
+const confirmReopenWithPercent = async () => {
+  const percent = Number(reopenPercentage.value) || 0
+  
+  // ✅ Appel de la fonction métier
+  const result = await reopenTicket({
+    ticketId: pendingReopen.value.id,
+    ticketName: pendingReopen.value.name,
+    percent
+    // Pas de batchId → source = 'manual'
+  })
+
+  // Trace dans GLPI
+  await addFollowup(
+    token,
+    pendingReopen.value.id,
+    `Réouverture : ${percent}% de ${result.baseCost.toFixed(2)}€ → +${result.cost.toFixed(2)}€`
+  )
+}
+
+🎯 Utilisation N°2 : Dans la saisie manuelle
+// Importation
+import { reopenTicket } from '@/services/ticketService'
+
+// Dans traiterAction()
+if (movement === 'open') {
+  // ✅ Même fonction métier que le Kanban
+  const result = await reopenTicket({
+    ticketId: glpiId,
+    ticketName: name,
+    percent: value || 0
+    // Pas de batchId → source = 'manual'
+  })
+}
+
+}
+🎯 Utilisation N°3 : Dans l'import CSV
+// Génération d'un batchId unique pour cet import
+const importBatchId = `import-${Date.now()}`
+
+// Pour chaque ligne CSV
+for (const row of rows) {
+  if (row.movement === 'open') {
+    // ✅ MÊME fonction, avec batchId cette fois
+    const result = await reopenTicket({
+      ticketId: glpiId,
+      ticketName: name,
+      percent: row.value,
+      batchId: importBatchId   // 🆔 Trace de l'import
+    })
+  }
+}
+
+
+🔵 Fonction 2 : closeTicket()
+export async function closeTicket({ ticketId, ticketName, amount, batchId }) {
+  // 1. Valide le montant
+  // 2. Récupère les items GLPI du ticket
+  // 3. Partage le montant entre les items (50/50, etc.)
+  // 4. Sauvegarde 1 coût par item avec un batchId commun
+}
+
+🎯 Utilisation N°1 : Dans le Kanban (drag & drop)
+import { closeTicket } from '@/services/ticketService'
+
+const confirmClose = async () => {
+  const amount = parseFloat(costAmount.value)
+  
+  // Ajoute la solution dans GLPI
+  if (solutionText.value.trim()) {
+    await addSolution(token, pendingClose.value.id, solutionText.value.trim())
+  }
+  
+  // Change le statut dans GLPI
+  await updateTicketStatus(token, pendingClose.value.id, 6)
+  
+  // ✅ Appel de la fonction métier (sauvegarde en base SQLite)
+  await closeTicket({
+    ticketId: pendingClose.value.id,
+    ticketName: pendingClose.value.name,
+    amount
+  })
+}
+
+🎯 Utilisation N°2 : Dans la saisie manuelle
+if (movement === 'close') {
+  // ✅ Même fonction
+  await closeTicket({
+    ticketId: glpiId,
+    ticketName: name,
+    amount: value || 0
+  })
+}
+
+🎯 Utilisation N°3 : Dans l'import CSV
+if (row.movement === 'close') {
+  // ✅ Même fonction, avec batchId
+  await closeTicket({
+    ticketId: glpiId,
+    ticketName: name,
+    amount: row.value,
+    batchId: importBatchId
+  })
+}
+
+❌ Fonction 3 : cancelLastCost()
+
+export async function cancelLastCost(ticketId) {
+  // 1. Récupère tous les coûts du ticket
+  // 2. Identifie le dernier coût et son batchId
+  // 3. Supprime TOUS les coûts du même batchId (annulation cohérente)
+}
+
+🎯 Utilisation N°1 : Dans le Kanban (drag & drop)
+
+import { cancelLastCost } from '@/services/ticketService'
+
+const confirmCancel = async () => {
+  // ✅ Appel de la fonction métier
+  const result = await cancelLastCost(pendingReopen.value.id)
+  
+  console.log(`🗑️ Coût ${result.totalAmount}€ supprimé`)
+  
+  // Change le statut dans GLPI
+  await changeStatus(pendingReopen.value, reopenTargetStatus.value)
+}
+
+🎯 Utilisation N°2 : Dans la saisie manuelle
+
+if (movement === 'cancel') {
+  // ✅ Même fonction
+  const result = await cancelLastCost(glpiId)
+}
+
+🎯 Utilisation N°3 : Dans l'import CSV
+
+if (row.movement === 'cancel') {
+  // ✅ Même fonction
+  const result = await cancelLastCost(glpiId)
+}

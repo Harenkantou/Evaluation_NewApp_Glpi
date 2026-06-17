@@ -2,6 +2,7 @@ package com.newapp.controller;
 
 import com.newapp.entity.KanbanConfig;
 import com.newapp.repository.KanbanConfigRepository;
+import com.newapp.repository.TicketCostRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,6 +15,9 @@ public class KanbanConfigController {
 
     @Autowired
     private KanbanConfigRepository repository;
+
+    @Autowired
+    private TicketCostRepository ticketCostRepository;
 
     // Valeurs par défaut des 3 statuts
     private List<KanbanConfig> getDefaults() {
@@ -59,6 +63,7 @@ public class KanbanConfigController {
     // POST /api/kanban/reset
     @PostMapping("/reset")
     public List<KanbanConfig> resetSettings() {
+        ticketCostRepository.deleteAll();
         repository.deleteAll();
         return repository.saveAll(getDefaults());
     }

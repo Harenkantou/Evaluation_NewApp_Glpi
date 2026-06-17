@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const api = axios.create({
-  baseURL: 'http://localhost:8080/api/kanban'
+  baseURL: import.meta.env.VITE_SQLITE_API_URL || '/api/kanban'
 })
 
 export async function getSettings() {

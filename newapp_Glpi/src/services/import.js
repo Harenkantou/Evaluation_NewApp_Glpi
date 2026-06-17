@@ -387,7 +387,7 @@ async function importTickets(csvText, sessionToken, createdElements, onProgress)
 
       const ticketInput = {
         name: row['titre']?.trim() || '',
-        content: row['description']?.trim() || '',
+        content: `${row['description']?.trim() || ''}\n\nRef_Ticket: ${row['ref_ticket']}\nItems: ${row['items']?.trim() || ''}`.trim(),
         type: TICKET_TYPE_MAP[(row['type'] || '').toLowerCase().trim()] ?? 1,
         status: TICKET_STATUS_MAP[(row['status'] || '').toLowerCase().trim()] ?? 1,
         priority: PRIORITY_MAP[(row['priority'] || '').toLowerCase().trim()] ?? 3,

@@ -1,0 +1,701 @@
+<script setup>
+import { ref } from 'vue'
+import BoLayout from '@/components/backoffice/BoLayout.vue'
+import { useGlpiStore } from '@/stores/glpi'
+import { getTickets } from '@/services/glpiApi'
+import { reopenTicket, closeTicket, cancelLastCost } from '@/services/ticketService'
+
+const glpi = useGlpiStore()
+
+// ─── État commun ─────────────────────────────────────────────
+const loading = ref(false)
+const message = ref('')
+const logs = ref([])
+
+// ─── 1️⃣ État SAISIE MANUELLE ────────────────────────────────
+const manualTicket = ref('')
+const manualMvt = ref('open')
+const manualValue = ref('')
+
+// ─── 2️⃣ État IMPORT FICHIER ─────────────────────────────────
+const file = ref(null)
+const setFile = (e) => { file.value = e.target.files?.[0] || null }
+
+// ─── Parsing CSV (gère les guillemets) ───────────────────────
+function parseCSVLine(line) {
+  const values = []
+  let current = ''
+  let inQuotes = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (ch === '"') { inQuotes = !inQuotes; continue }
+    if (ch === ',' && !inQuotes) { values.push(current.trim()); current = ''; continue }
+    current += ch
+  }
+  values.push(current.trim())
+  return values
+}
+
+function parseCSV(text) {
+  const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim())
+  if (!lines.length) return []
+
+  const first = parseCSVLine(lines[0]).map(c => c.toLowerCase())
+  const hasHeader = first.some(c => ['ticket', 'mvt', 'valeur'].includes(c))
+  const data = hasHeader ? lines.slice(1) : lines
+
+  return data.map(line => {
+    const [ticket, mvt, value] = parseCSVLine(line)
+    const num = value ? Number(value.replace(',', '.')) : null
+    return {
+      ticketRef: String(ticket || '').trim(),
+      movement: String(mvt || '').trim().toLowerCase(),
+      value: Number.isFinite(num) ? num : null
+    }
+  }).filter(r => r.ticketRef && r.movement)
+}
+
+// ─── Mapping Ref → ID GLPI ───────────────────────────────────
+async function buildRefToIdMap() {
+  const map = new Map()
+  
+  try {
+    const token = await glpi.ensureToken()
+    const tickets = await getTickets(token)
+
+    if (!Array.isArray(tickets)) {
+      console.warn('⚠️ getTickets n\'a pas retourné un tableau:', tickets)
+      return map
+    }
+
+    tickets.forEach(ticket => {
+      if (!ticket || !ticket.id) return
+      
+      const content = String(ticket.content || '')
+      const match = content.match(/Ref_Ticket:\s*(\d+)/i)
+      
+      if (match && match[1]) {
+        map.set(String(match[1]), ticket.id)
+      } else {
+        // Fallback : utiliser l'ID GLPI directement
+        map.set(String(ticket.id), ticket.id)
+      }
+    })
+
+    console.log('🗺️ Map Ref → ID GLPI:', Object.fromEntries(map))
+  } catch (err) {
+    console.error('❌ Erreur buildRefToIdMap:', err)
+  }
+  
+  return map
+}
+
+// ─── 🟢 FONCTION MÉTIER COMMUNE (équivalent traiter(a,b,c)) ──
+// Cette fonction est appelée DEPUIS la saisie manuelle ET le CSV
+async function traiterAction({ ticketRef, movement, value }, refToId, batchId = null) {
+  // Récupérer l'ID GLPI
+  let glpiId = refToId.get(ticketRef)
+  
+  if (!glpiId) {
+    const directId = Number(ticketRef)
+    if (Number.isInteger(directId) && directId > 0) glpiId = directId
+  }
+  
+  if (!glpiId) {
+    return { 
+      success: false, 
+      log: `⚠️ Ticket ref ${ticketRef} introuvable dans GLPI` 
+    }
+  }
+
+  const name = `Ticket #${glpiId} (ref ${ticketRef})`
+
+  try {
+    // 🟢 OPEN = Réouverture (% du dernier coût)
+    if (movement === 'open') {
+      const result = await reopenTicket({
+        ticketId: glpiId,
+        ticketName: name,
+        percent: value || 0,
+        batchId
+      })
+      return {
+        success: true,
+        type: 'open',
+        log: `🟢 ${name} OPEN ${value}% de ${result.baseCost.toFixed(2)}€ → +${result.cost.toFixed(2)}€`
+      }
+    }
+
+    // 🔵 CLOSE = Clôture (montant fixe)
+    if (movement === 'close') {
+      await closeTicket({
+        ticketId: glpiId,
+        ticketName: name,
+        amount: value || 0,
+        batchId
+      })
+      return {
+        success: true,
+        type: 'close',
+        log: `🔵 ${name} CLOSE ${value}€`
+      }
+    }
+
+    // ❌ CANCEL = Annulation du dernier coût (groupé par batchId)
+    if (movement === 'cancel') {
+      const result = await cancelLastCost(glpiId)
+      return {
+        success: true,
+        type: 'cancel',
+        log: `❌ ${name} CANCEL → ${result.totalAmount}€ supprimé (${result.deletedCount} ligne(s))`
+      }
+    }
+
+    return { 
+      success: false, 
+      log: `⚠️ Mouvement inconnu : ${movement}` 
+    }
+  } catch (err) {
+    return { 
+      success: false, 
+      log: `❌ ${name} ${movement} échoué : ${err.message}` 
+    }
+  }
+}
+
+// ─── 2️⃣ APPEL DEPUIS LA SAISIE MANUELLE ─────────────────────
+async function handleClickManuel() {
+  message.value = ''
+  logs.value = []
+
+  // Validation
+  if (!manualTicket.value) {
+    message.value = '❌ Veuillez saisir un ID de ticket'
+    return
+  }
+
+  if (!manualMvt.value) {
+    message.value = '❌ Veuillez choisir un mouvement'
+    return
+  }
+
+  // Validation valeur pour open/close
+  if (manualMvt.value !== 'cancel' && (!manualValue.value || manualValue.value === '')) {
+    message.value = `❌ La valeur est obligatoire pour ${manualMvt.value}`
+    return
+  }
+
+  loading.value = true
+  try {
+    const refToId = await buildRefToIdMap()
+
+    // ✅ Convertir la valeur (gère la virgule française)
+    const rawValue = String(manualValue.value).replace(',', '.')
+    const numValue = rawValue ? Number(rawValue) : null
+
+    // 🎯 Appel de la fonction métier commune (PAS de batchId = source manual)
+    const result = await traiterAction({
+      ticketRef: String(manualTicket.value).trim(),
+      movement: manualMvt.value.toLowerCase(),
+      value: numValue
+    }, refToId)
+
+    logs.value.push(result.log)
+    message.value = result.success
+      ? '✅ Action manuelle exécutée avec succès'
+      : '❌ Action échouée'
+
+    // Reset formulaire si succès
+    if (result.success) {
+      manualTicket.value = ''
+      manualValue.value = ''
+    }
+  } catch (e) {
+    message.value = '❌ ' + (e.message || 'Erreur')
+    console.error('❌ Erreur handleClickManuel:', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+// ─── 3️⃣ APPEL DEPUIS L'IMPORT CSV ───────────────────────────
+async function handleImport() {
+  message.value = ''
+  logs.value = []
+
+  if (!file.value) {
+    message.value = '❌ Veuillez choisir un fichier'
+    return
+  }
+
+  loading.value = true
+  try {
+    const text = await file.value.text()
+    const rows = parseCSV(text)
+    
+    if (!rows.length) throw new Error('CSV vide ou invalide')
+
+    console.log('📂 Lignes parsées :', rows)
+
+    const refToId = await buildRefToIdMap()
+    
+    // ✅ Générer un batchId unique pour cet import CSV
+    const importBatchId = `import-${Date.now()}`
+    
+    const summary = { open: 0, close: 0, cancel: 0, ignored: 0 }
+
+    // 🎯 Pour chaque ligne, appel de la MÊME fonction métier
+    for (const row of rows) {
+      const result = await traiterAction(row, refToId, importBatchId)
+      logs.value.push(result.log)
+
+      if (result.success) {
+        summary[result.type]++
+      } else {
+        summary.ignored++
+      }
+    }
+
+    message.value = `✅ Import : ${summary.open} open, ${summary.close} close, ${summary.cancel} cancel, ${summary.ignored} ignoré(s)`
+  } catch (e) {
+    message.value = '❌ ' + (e.message || 'Erreur')
+    console.error('❌ Erreur handleImport:', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+// ─── Réinitialiser ───────────────────────────────────────────
+const resetLogs = () => {
+  message.value = ''
+  logs.value = []
+}
+</script>
+
+<template>
+  <BoLayout>
+    <div class="container">
+      <h1>📥 Import scénario tickets</h1>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- 1️⃣ SAISIE MANUELLE                          -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section class="card">
+        <h2>✍️ Saisie manuelle</h2>
+        <p class="hint">
+          Saisir une action ticket directement (équivalent à une ligne CSV).
+        </p>
+
+        <div class="manual-form">
+          <div class="field">
+            <label>Ticket</label>
+            <input
+              v-model="manualTicket"
+              type="text"
+              placeholder="Ex: 1"
+              class="input"
+            />
+          </div>
+
+          <div class="field">
+            <label>Mouvement</label>
+            <select v-model="manualMvt" class="input">
+              <option value="open">open (réouverture %)</option>
+              <option value="close">close (clôture €)</option>
+              <option value="cancel">cancel (annulation)</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Valeur</label>
+            <input
+              v-model="manualValue"
+              type="text"
+              :placeholder="manualMvt === 'cancel' ? '(vide pour cancel)' : 'Ex: 16,5'"
+              :disabled="manualMvt === 'cancel'"
+              class="input"
+            />
+          </div>
+
+          <button
+            @click="handleClickManuel"
+            :disabled="loading || !manualTicket"
+            class="btn-primary"
+          >
+            {{ loading ? '⏳' : '▶' }} Traiter
+          </button>
+        </div>
+
+        <p class="example">
+          💡 Exemple : ticket=<code>1</code>, mvt=<code>open</code>, valeur=<code>16,5</code>
+        </p>
+      </section>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- SÉPARATEUR                                   -->
+      <!-- ═══════════════════════════════════════════ -->
+      <div class="separator">
+        <span>OU</span>
+      </div>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- 2️⃣ IMPORT CSV                               -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section class="card">
+        <h2>📁 Import fichier CSV</h2>
+        <p class="hint">
+          Format : <code>ticket,mvt,valeur</code> avec mvt = open / close / cancel
+        </p>
+
+        <div class="import-form">
+          <input 
+            type="file" 
+            accept=".csv" 
+            @change="setFile" 
+            class="input file-input"
+          />
+          <button
+            @click="handleImport"
+            :disabled="loading || !file"
+            class="btn-primary"
+          >
+            {{ loading ? '⏳ Import...' : '📥 Importer' }}
+          </button>
+        </div>
+
+        <details class="example-csv">
+          <summary>📄 Voir un exemple de CSV</summary>
+          <pre>ticket,mvt,valeur
+1,open,"16,5"
+2,open,"5,5"
+2,close,20
+2,cancel,</pre>
+          <p class="hint-small">
+            ⚠️ Les valeurs avec virgule décimale (ex: 16,5) doivent être entre guillemets
+          </p>
+        </details>
+      </section>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- RÉSULTATS                                    -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section v-if="message || logs.length" class="card results">
+        <div class="results-header">
+          <h2>📊 Résultats</h2>
+          <button @click="resetLogs" class="btn-ghost">🗑️ Effacer</button>
+        </div>
+
+        <p 
+          v-if="message" 
+          class="message" 
+          :class="{ error: message.startsWith('❌') }"
+        >
+          {{ message }}
+        </p>
+
+        <ul v-if="logs.length" class="logs">
+          <li v-for="(log, i) in logs" :key="i" :class="{
+            'log-success': log.startsWith('🟢') || log.startsWith('🔵'),
+            'log-cancel': log.startsWith('❌'),
+            'log-warn': log.startsWith('⚠️')
+          }">
+            {{ log }}
+          </li>
+        </ul>
+      </section>
+    </div>
+  </BoLayout>
+</template>
+
+<style scoped>
+.container {
+  max-width: 850px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+h1 {
+  margin-bottom: 1.5rem;
+  color: #1e293b;
+}
+
+/* ─── Cards ─────────────────────────────────────── */
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e2e8f0;
+}
+
+.card h2 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.2rem;
+  color: #1e293b;
+}
+
+.hint {
+  color: #64748b;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.hint-small {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  font-style: italic;
+  margin-top: 0.5rem;
+}
+
+.hint code,
+.example code {
+  background: #f1f5f9;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-family: 'Courier New', monospace;
+}
+
+/* ─── Formulaire manuel ─────────────────────────── */
+.manual-form {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 130px;
+}
+
+.field label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #475569;
+  text-transform: uppercase;
+}
+
+.input {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  background: white;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.input:disabled {
+  background: #f1f5f9;
+  cursor: not-allowed;
+  color: #94a3b8;
+}
+
+.file-input {
+  flex: 1;
+}
+
+/* ─── Formulaire import CSV ─────────────────────── */
+.import-form {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ─── Boutons ───────────────────────────────────── */
+.btn-primary {
+  background: #2563eb;
+  color: white;
+  border: none;
+  padding: 0.65rem 1.4rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  background: #f1f5f9;
+  color: #475569;
+  border: none;
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.btn-ghost:hover {
+  background: #e2e8f0;
+}
+
+/* ─── Exemples ──────────────────────────────────── */
+.example {
+  margin-top: 1rem;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+.example code {
+  background: #fef3c7;
+  color: #92400e;
+  font-weight: 600;
+}
+
+.example-csv {
+  margin-top: 1rem;
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 0.5rem 0.8rem;
+}
+
+.example-csv summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #475569;
+  padding: 0.3rem 0;
+}
+
+.example-csv pre {
+  background: #1e293b;
+  color: #f1f5f9;
+  padding: 1rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  font-family: 'Courier New', monospace;
+}
+
+/* ─── Séparateur ────────────────────────────────── */
+.separator {
+  display: flex;
+  align-items: center;
+  margin: 1.5rem 0;
+  color: #94a3b8;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.separator::before,
+.separator::after {
+  content: '';
+  flex: 1;
+  border-bottom: 2px dashed #cbd5e1;
+}
+
+.separator span {
+  padding: 0.3rem 1rem;
+  background: white;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  color: #64748b;
+}
+
+/* ─── Résultats ─────────────────────────────────── */
+.results {
+  border-left: 4px solid #2563eb;
+}
+
+.results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.results-header h2 {
+  margin: 0;
+}
+
+.message {
+  padding: 0.8rem 1rem;
+  border-radius: 8px;
+  background: #dcfce7;
+  color: #166534;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.message.error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.logs {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 0.8rem;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.logs li {
+  padding: 0.4rem 0.6rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  color: #334155;
+  border-bottom: 1px solid #e2e8f0;
+  border-radius: 4px;
+  margin-bottom: 0.2rem;
+}
+
+.logs li:last-child {
+  border-bottom: none;
+}
+
+.log-success {
+  background: #f0fdf4;
+}
+
+.log-cancel {
+  background: #fef2f2;
+}
+
+.log-warn {
+  background: #fffbeb;
+}
+
+/* ─── Responsive ────────────────────────────────── */
+@media (max-width: 640px) {
+  .manual-form,
+  .import-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .field {
+    min-width: auto;
+  }
+  
+  .btn-primary {
+    width: 100%;
+  }
+}
+</style>

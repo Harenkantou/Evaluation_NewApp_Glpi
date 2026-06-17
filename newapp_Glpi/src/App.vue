@@ -13,6 +13,8 @@
         <router-link to="/admin/dashboard">Tableau de bord</router-link>
         <router-link to="/admin/import">Importer</router-link>
         <router-link to="/admin/reset">Réinitialiser</router-link>
+        <router-link to="/backoffice/costs">Tableau gestion cout</router-link>
+        <router-link to="/admin/import-ticket-csv">Import mouvement</router-link>
       </nav>
     </header>
 

@@ -1,0 +1,13 @@
+// simulator.js
+import { closeTicket, reopenTicket } from '@/services/ticketService'
+
+async function simulate({ count, baseAmount, reopenRate, reopenPercent }) {
+  for (let i = 0; i < count; i++) {
+    const ticketId = `SIM-${Date.now()}-${i}`
+    await closeTicket({ ticketId, ticketName: 'Sim', amount: baseAmount })
+    
+    if (Math.random() < reopenRate) {
+      await reopenTicket({ ticketId, ticketName: 'Sim', percent: reopenPercent })
+    }
+  }
+}

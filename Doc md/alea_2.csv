@@ -1,0 +1,13 @@
+ticket,mvt,valeur
+1,close,100
+2,close,100
+1,open,5
+1,close,45
+2,open,10
+2,close,150
+2,cancel,
+2,close,100
+1,open,"16,5"
+2,open,"5,5"
+2,close,20
+2,cancel,

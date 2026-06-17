@@ -186,23 +186,28 @@ export async function linkItemToTicket(token, ticketId, itemtype, itemsId) {
 }
 
 export async function getTicketItems(token, ticketId) {
-  const session = await getSessionToken()
-  const { data } = await legacy.get(`/Ticket/${ticketId}/Item_Ticket`, {
-    headers: { 'Session-Token': session },
-    params: { range: '0-9999', expand_dropdowns: true }
-  })
-  const list = Array.isArray(data) ? data : (data?.data || [])
-  return list
-    .map((item) => ({
-      ...item,
-      itemtype: item.itemtype || item.item_type || null
-    }))
-    .filter((item) => ['Computer', 'Monitor', 'Phone'].includes(item.itemtype))
-    .map((item) => ({
-      id: Number(item.items_id),
-      name: item.name || item.item_name || `${item.itemtype || 'Item'} #${item.items_id}`,
-      itemtype: item.itemtype
-    }))
+  try {
+    const session = await getSessionToken()
+    const { data } = await legacy.get(`/Ticket/${ticketId}/Item_Ticket`, {
+      headers: { 'Session-Token': session },
+      params: { range: '0-9999', expand_dropdowns: true }
+    })
+    const list = Array.isArray(data) ? data : (data?.data || [])
+    return list
+      .map((item) => ({
+        ...item,
+        itemtype: item.itemtype || item.item_type || null
+      }))
+      .filter((item) => ['Computer', 'Monitor', 'Phone'].includes(item.itemtype))
+      .map((item) => ({
+        id: Number(item.items_id),
+        name: item.name || item.item_name || `${item.itemtype || 'Item'} #${item.items_id}`,
+        itemtype: item.itemtype
+      }))
+  } catch (error) {
+    console.warn('getTicketItems fallback for ticket', ticketId, error?.response?.status || error?.message || error)
+    return []
+  }
 }
 
 // ---------- Dropdowns via API v1 : find-or-create ----------

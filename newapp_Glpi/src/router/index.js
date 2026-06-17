@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import LoginView from '@/views/backoffice/LoginView.vue'
 import DashboardView from '@/views/backoffice/DashboardView.vue'
 import ImportView from '@/views/backoffice/ImportView.vue'
+import ImportTicketCSV from '@/views/backoffice/ImportTicketCSV.vue'
 import ResetView from '@/views/backoffice/ResetView.vue'
 import TicketsView from '@/views/backoffice/TicketsView.vue'
 import TicketDetailView from '@/views/backoffice/TicketDetailView.vue'
@@ -30,6 +31,7 @@ const routes = [
   { path: '/admin', redirect: '/admin/dashboard', meta: { requiresAuth: true } },
   { path: '/admin/dashboard', name: 'dashboard', component: DashboardView, meta: { requiresAuth: true } },
   { path: '/admin/import', name: 'import', component: ImportView, meta: { requiresAuth: true } },
+  { path: '/admin/import-ticket-csv', name: 'import-ticket-csv', component: ImportTicketCSV, meta: { requiresAuth: true } },
   { path: '/admin/reset', name: 'reset', component: ResetView, meta: { requiresAuth: true } },
   { path: '/admin/tickets', name: 'tickets', component: TicketsView, meta: { requiresAuth: true } },
   { path: '/admin/tickets/:id', name: 'ticket-detail', component: TicketDetailView, meta: { requiresAuth: true } },

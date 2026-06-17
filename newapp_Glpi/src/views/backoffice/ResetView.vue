@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import BoLayout from '@/components/backoffice/BoLayout.vue'
 import { useGlpiStore } from '@/stores/glpi'
+import { resetSettings as resetSqliteSettings } from '@/services/sqliteService'
 
 const glpi = useGlpiStore()
 const loading = ref(false)
@@ -16,9 +17,14 @@ async function confirmReset() {
   try {
     // On appelle la purge totale au lieu du reset partiel
     await glpi.purgeAllData()
+    try {
+      await resetSqliteSettings()
+    } catch (sqliteError) {
+      throw new Error(`Erreur SQLite : ${sqliteError.response?.data?.detail || sqliteError.message || 'reset impossible'}`)
+    }
     done.value = true
   } catch (e) {
-    error.value = e.response?.data?.detail || e.message || 'Erreur API GLPI'
+    error.value = e.response?.data?.detail || e.message || 'Erreur pendant la reinitialisation'
   } finally {
     loading.value = false
   }
@@ -31,7 +37,7 @@ async function confirmReset() {
     <div class="card">
       <p>Cette action est irréversible.</p>
       <button class="danger" :disabled="loading" @click="confirmReset">
-        {{ loading ? 'Purge en cours...' : '🗑️ Reinitialiser les données' }}
+        {{ loading ? 'Réinitialisation en cours...' : '🗑️ Reinitialiser les données' }}
       </button>
       <p v-if="done" class="ok">✅ Toutes les données ont été définitivement supprimées de GLPI.</p>
       <p v-if="error" class="error">{{ error }}</p>

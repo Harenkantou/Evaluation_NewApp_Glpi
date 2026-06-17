@@ -2,35 +2,46 @@
 import { ref, computed, onMounted } from 'vue'
 import BoLayout from '@/components/backoffice/BoLayout.vue'
 import { useGlpiStore } from '@/stores/glpi'
-import { getAllTicketCosts, getTicketItems } from '@/services/glpiApi'
+import {
+  getAllTicketCosts,
+  getTicketItems,
+  getComputers,
+  getMonitors,
+  getPhones
+} from '@/services/glpiApi'
 import { getAllCosts } from '@/services/costService'
 
 const glpi = useGlpiStore()
+
 const loading = ref(true)
 const error = ref('')
 const glpiCosts = ref([])
 const sqliteCosts = ref([])
 const rows = ref([])
 
+//const reopeningByMode = ref([])
+
+const selectedType = ref(null)
+const allComputers = ref([])
+const allMonitors = ref([])
+const allPhones = ref([])
+
 const normalizeItemType = raw => {
   const value = String(raw || '').trim().toLowerCase()
   if (value.includes('computer')) return 'Computer'
   if (value.includes('monitor') || value.includes('moniteur')) return 'Monitor'
   if (value.includes('phone')) return 'Phone'
-  return 'Unknown'
+  return null
 }
 
-const getItems = async (token, ticketId, cache) => {
+const getItemsForTicket = async (token, ticketId, cache) => {
   if (cache.has(ticketId)) return cache.get(ticketId)
   try {
     const items = await getTicketItems(token, ticketId)
-    // ✅ CORRECTION 1 : Filtrer les liens invalides AVANT normalisation
     const normalized = items
       .filter(item => item && item.itemtype)
-      .map(item => ({
-        ...item,
-        itemtype: normalizeItemType(item.itemtype)
-      }))
+      .map(item => ({ ...item, itemtype: normalizeItemType(item.itemtype) }))
+      .filter(item => item.itemtype !== null)
     cache.set(ticketId, normalized)
     return normalized
   } catch {
@@ -40,47 +51,51 @@ const getItems = async (token, ticketId, cache) => {
 }
 
 const addRow = (map, itemType, field, amount) => {
-  const row = map.get(itemType) ?? { itemType, glpiCost: 0, superCost: 0, reopeningCost: 0 }
+  const row = map.get(itemType) ?? { 
+    itemType, 
+    glpiCost: 0, 
+    superCost: 0, 
+    reopeningCost: 0 
+  }
   row[field] += amount
   map.set(itemType, row)
 }
 
-const buildRows = async token => {
-  const cache = new Map()
+const buildRows = async () => {
   const rowsMap = new Map()
 
-  const costs = [
-    ...glpiCosts.value.map(item => ({ ...item, source: 'glpi', isReopening: false })),
-    ...sqliteCosts.value.map(item => ({ ...item, source: 'sqlite', isReopening: item.isReopening || false }))
-  ]
-
-  for (const cost of costs) {
-    const amount = cost.source === 'glpi'
-      ? ((cost.actiontime || 0) / 3600) * (cost.costTime || 0) + (cost.costFixed || 0) + (cost.costMaterial || 0)
-      : Number(cost.cost) || 0
+  // 1️⃣ Coûts GLPI (toujours via API GLPI)
+  for (const cost of glpiCosts.value) {
+    const amount = ((cost.actiontime || 0) / 3600) * (cost.costTime || 0)
+      + (cost.costFixed || 0) + (cost.costMaterial || 0)
     if (amount <= 0) continue
 
-    const items = await getItems(token, cost.ticketId, cache)
-    // ✅ CORRECTION 2 : Déduplication stricte des itemTypes (un seul Computer même si lié plusieurs fois)
-    const itemTypes = [...new Set(items.map(i => i.itemtype))].filter(type => type !== 'Unknown')
+    // Pour les coûts GLPI, on récupère encore les items via API
+    const token = await glpi.ensureToken()
+    const items = await getTicketItems(token, cost.ticketId)
+    const normalized = (items || [])
+      .map(i => normalizeItemType(i.itemtype))
+      .filter(t => t !== null)
     
-    // Déterminer le champ cible (glpiCost, superCost, ou reopeningCost)
-    let field = 'glpiCost'
-    if (cost.source === 'sqlite') {
-      field = cost.isReopening ? 'reopeningCost' : 'superCost'
-    }
+    if (!normalized.length) continue
+    const share = amount / normalized.length
+    normalized.forEach(type => addRow(rowsMap, type, 'glpiCost', share))
+  }
 
-    // 🔍 LOG de diagnostic (à retirer en production)
-    console.log(`[Ticket ${cost.ticketId}] amount=${amount} field=${field} itemTypes=`, itemTypes)
-
-    if (!itemTypes.length) {
-      addRow(rowsMap, 'Unknown', field, amount)
+  // 2️⃣ Coûts SQLite (avec itemType déjà en base !)
+  for (const cost of sqliteCosts.value) {
+    const amount = Number(cost.costValue) || 0
+    if (amount <= 0) continue
+    
+    // ✅ Plus besoin d'appeler GLPI : itemType est en base !
+    const itemType = cost.itemType
+    if (!itemType || itemType === 'Unknown') {
+      console.warn(`⚠️ Coût SQLite #${cost.id} sans itemType → ignoré`)
       continue
     }
-
-    // ✅ CORRECTION 3 : Partage équitable du montant entre les items distincts
-    const share = amount / itemTypes.length
-    itemTypes.forEach(type => addRow(rowsMap, type, field, share))
+    
+    const field = cost.costType === 'reopening' ? 'reopeningCost' : 'superCost'
+    addRow(rowsMap, itemType, field, amount)
   }
 
   rows.value = [...rowsMap.values()].sort((a, b) => a.itemType.localeCompare(b.itemType))
@@ -91,10 +106,22 @@ const loadData = async () => {
   error.value = ''
   try {
     const token = await glpi.ensureToken()
-    const [glpiC, sqliteC] = await Promise.all([getAllTicketCosts(token), getAllCosts()])
+
+    const [glpiC, sqliteC, computers, monitors, phones] = await Promise.all([
+      getAllTicketCosts(token),
+      getAllCosts(),
+      getComputers(token),
+      getMonitors(token),
+      getPhones(token)
+    ])
+
     glpiCosts.value = glpiC
     sqliteCosts.value = sqliteC
-    await buildRows(token)
+    allComputers.value = computers || []
+    allMonitors.value = monitors || []
+    allPhones.value = phones || []
+
+    await buildRows()   // ✅ Plus besoin de token
   } catch (err) {
     error.value = err.message || 'Erreur lors du chargement'
   } finally {
@@ -108,6 +135,25 @@ const totals = computed(() => rows.value.reduce((sum, row) => ({
   reopening: sum.reopening + row.reopeningCost,
   total: sum.total + row.glpiCost + row.superCost + row.reopeningCost
 }), { glpi: 0, super: 0, reopening: 0, total: 0 }))
+
+// ✅ Items affichés selon le type sélectionné
+const selectedItems = computed(() => {
+  if (!selectedType.value) return []
+  switch (selectedType.value) {
+    case 'Computer': return allComputers.value
+    case 'Monitor':  return allMonitors.value
+    case 'Phone':    return allPhones.value
+    default:         return []
+  }
+})
+
+const selectType = (type) => {
+  selectedType.value = selectedType.value === type ? null : type
+}
+
+const closeDetail = () => {
+  selectedType.value = null
+}
 
 const fmt = value => Number(value || 0).toFixed(2)
 
@@ -127,6 +173,7 @@ onMounted(loadData)
     <div v-else-if="error" class="alert-error">❌ {{ error }}</div>
 
     <div v-else>
+      <!-- Stats globales -->
       <div class="stats">
         <div class="stat-card">
           <span>Coût GLPI</span>
@@ -146,6 +193,7 @@ onMounted(loadData)
         </div>
       </div>
 
+      <!-- Tableau principal -->
       <table v-if="rows.length">
         <thead>
           <tr>
@@ -158,11 +206,22 @@ onMounted(loadData)
         </thead>
         <tbody>
           <tr v-for="row in rows" :key="row.itemType">
-            <td><span :class="`badge badge-${row.itemType.toLowerCase()}`">{{ row.itemType }}</span></td>
+            <!-- ✅ SEUL le badge est cliquable -->
+            <td>
+              <span
+                :class="['badge', `badge-${row.itemType.toLowerCase()}`, 'clickable']"
+                :title="`Cliquer pour voir les ${row.itemType}`"
+                @click="selectType(row.itemType)"
+              >
+                {{ row.itemType }} 👁️
+              </span>
+            </td>
             <td class="right">{{ fmt(row.glpiCost) }} €</td>
             <td class="right blue">{{ fmt(row.superCost) }} €</td>
             <td class="right green">{{ fmt(row.reopeningCost) }} €</td>
-            <td class="right bold">{{ fmt(row.glpiCost + row.superCost + row.reopeningCost) }} €</td>
+            <td class="right bold">
+              {{ fmt(row.glpiCost + row.superCost + row.reopeningCost) }} €
+            </td>
           </tr>
         </tbody>
         <tfoot>
@@ -176,13 +235,58 @@ onMounted(loadData)
         </tfoot>
       </table>
 
+
       <p v-else class="empty">Aucun coût enregistré.</p>
+
+      <!-- ─── DÉTAIL au clic ──────────────────────────────── -->
+      <div v-if="selectedType" class="detail-panel">
+        <div class="detail-header">
+          <h2>
+            <span :class="`badge badge-${selectedType.toLowerCase()}`">
+              {{ selectedType }}
+            </span>
+            Items concernés ({{ selectedItems.length }})
+          </h2>
+          <button class="btn-close" @click="closeDetail">✕</button>
+        </div>
+
+        <table v-if="selectedItems.length">
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Fabricant</th>
+              <th>Modèle</th>
+              <th>Statut</th>
+              <th>Utilisateur</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in selectedItems" :key="item.id">
+              <td><strong>{{ item.name || `#${item.id}` }}</strong></td>
+              <td>{{ item.manufacturers_id || '-' }}</td>
+              <td>
+                {{
+                  item.computermodels_id ||
+                  item.monitormodels_id ||
+                  item.phonemodels_id ||
+                  '-'
+                }}
+              </td>
+              <td>
+                <span class="status-badge">{{ item.states_id || '-' }}</span>
+              </td>
+              <td>{{ item.users_id || '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p v-else class="empty">Aucun item dans cette catégorie.</p>
+      </div>
     </div>
   </BoLayout>
 </template>
 
 <style scoped>
-/* (styles inchangés) */
 .header {
   display: flex;
   justify-content: space-between;
@@ -230,7 +334,6 @@ h1 { margin: 0; color: #1e293b; }
   color: #991b1b;
   padding: 0.8rem 1rem;
   border-radius: 8px;
-  margin-bottom: 1rem;
 }
 
 table {
@@ -253,7 +356,6 @@ th {
   font-size: 0.82rem;
   text-transform: uppercase;
 }
-tr:last-child td { border-bottom: none; }
 tfoot td {
   border-top: 2px solid #e2e8f0;
   background: #f8fafc;
@@ -264,17 +366,35 @@ tfoot td {
 .blue  { color: #2563eb; }
 .green { color: #059669; }
 
+/* ✅ Badge cliquable */
 .badge {
-  padding: 0.2rem 0.55rem;
+  padding: 0.3rem 0.7rem;
   border-radius: 999px;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.badge.clickable {
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.badge.clickable:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
 }
 .badge-computer { background: #dbeafe; color: #1e40af; }
 .badge-monitor  { background: #fef3c7; color: #92400e; }
 .badge-phone    { background: #dcfce7; color: #166534; }
-.badge-unknown  { background: #e2e8f0; color: #0f172a; }
-.badge-ticket   { background: #f1f5f9; color: #475569; }
+
+.status-badge {
+  background: #f1f5f9;
+  color: #475569;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+}
 
 .empty {
   text-align: center;
@@ -282,4 +402,41 @@ tfoot td {
   font-style: italic;
   padding: 2rem;
 }
+
+.detail-panel {
+  margin-top: 1.5rem;
+  background: white;
+  border-radius: 10px;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  border-left: 4px solid #2563eb;
+}
+
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.detail-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.btn-close {
+  background: #fee2e2;
+  color: #991b1b;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-weight: bold;
+}
+.btn-close:hover { background: #fecaca; }
 </style>
